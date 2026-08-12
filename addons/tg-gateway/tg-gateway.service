@@ -1,0 +1,14 @@
+[Unit]
+Description=Telegram Gateway - ЕДИНАЯ точка доступа к Телеграму для всех сервисов
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root
+EnvironmentFile=-/home/knee_bot/keys.env
+ExecStart=/root/tg_gateway_venv/bin/python /root/tg_gateway.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

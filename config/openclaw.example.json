@@ -1,0 +1,224 @@
+{
+  "__comment": "Шаблон openclaw.json. Главное здесь: (1) два агента — интерактивный main и урезанный background для фона; (2) модели с явным input, иначе OpenClaw молча выбросит картинку; (3) компактизация safeguard. Токены/ключи — через ${VAR} из .env.",
+  "models": {
+    "providers": {
+      "excash": {
+        "baseUrl": "${EXCASH_API_URL}",
+        "apiKey": "${EXCASH_API_KEY}",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "gpt-5.6-sol",
+            "name": "GPT-5.6 Sol",
+            "input": [
+              "text",
+              "image"
+            ],
+            "maxTokens": 65535,
+            "contextWindow": 200000
+          },
+          {
+            "id": "gemini-3.6-flash",
+            "name": "Gemini 3.6 Flash",
+            "input": [
+              "text",
+              "image"
+            ],
+            "maxTokens": 65535,
+            "contextWindow": 1000000
+          },
+          {
+            "id": "gemini-3.1-pro",
+            "name": "Gemini 3.1 Pro",
+            "input": [
+              "text",
+              "image"
+            ],
+            "maxTokens": 65535,
+            "contextWindow": 1000000
+          }
+        ]
+      },
+      "dseek": {
+        "baseUrl": "https://api.deepseek.com/v1",
+        "apiKey": "${DEEPSEEK_API_KEY}",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "deepseek-v4-pro",
+            "name": "DeepSeek V4 Pro",
+            "input": [
+              "text"
+            ],
+            "maxTokens": 64000,
+            "contextWindow": 131072
+          },
+          {
+            "id": "deepseek-v4-flash",
+            "name": "DeepSeek V4 Flash",
+            "input": [
+              "text"
+            ],
+            "maxTokens": 64000,
+            "contextWindow": 131072
+          }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "excash/gpt-5.6-sol",
+        "fallbacks": [
+          "excash/gemini-3.6-flash",
+          "excash/gemini-3.1-pro",
+          "dseek/deepseek-v4-pro"
+        ]
+      },
+      "verboseDefault": "on",
+      "thinkingDefault": "adaptive",
+      "compaction": {
+        "mode": "safeguard",
+        "notifyUser": true,
+        "recentTurnsPreserve": 5,
+        "reserveTokens": 20000,
+        "memoryFlush": {
+          "enabled": true
+        },
+        "midTurnPrecheck": {
+          "enabled": true
+        }
+      },
+      "subagents": {
+        "maxConcurrent": 8,
+        "runTimeoutSeconds": 2700,
+        "maxChildrenPerAgent": 5
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "default": true,
+        "name": "Ассистент"
+      },
+      {
+        "id": "background",
+        "name": "Ассистент-фон",
+        "workspace": "/home/openclaw/.openclaw/workspace-bg",
+        "tools": {
+          "deny": [
+            "message",
+            "sessions_spawn",
+            "subagents",
+            "browser"
+          ]
+        },
+        "__comment": "Фоновый агент для heartbeat/кронов: НЕ может слать сообщения и плодить субагентов. Кроны вешать на него: openclaw cron add ... --agent background --session isolated --announce --channel telegram --to <ВАШ_ID>. В workspace-bg положите config/AGENTS-background.example.md, а memory/ и skills/ сделайте симлинками на основной workspace."
+      }
+    ]
+  },
+  "tools": {
+    "media": {
+      "image": {
+        "enabled": true,
+        "timeoutSeconds": 300,
+        "maxBytes": 26214400,
+        "models": [
+          {
+            "provider": "excash",
+            "model": "gemini-3.6-flash"
+          }
+        ]
+      },
+      "audio": {
+        "enabled": true,
+        "echoTranscript": true,
+        "language": "ru",
+        "timeoutSeconds": 300,
+        "maxBytes": 26214400,
+        "models": [
+          {
+            "type": "cli",
+            "command": "/home/openclaw/mailvenv/bin/python",
+            "args": [
+              "/home/openclaw/.openclaw/transcribe.py",
+              "{{MediaPath}}"
+            ]
+          }
+        ]
+      }
+    },
+    "web": {
+      "fetch": {
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+      }
+    }
+  },
+  "mcp": {
+    "servers": {
+      "research": {
+        "command": "/home/openclaw/mailvenv/bin/python",
+        "args": [
+          "/home/openclaw/.openclaw/research_mcp.py"
+        ],
+        "env": {
+          "RUST_LOG": "error",
+          "PYTHONWARNINGS": "ignore"
+        }
+      },
+      "biomcp": {
+        "command": "/home/openclaw/mailvenv/bin/biomcp",
+        "args": [
+          "run",
+          "--mode",
+          "stdio"
+        ],
+        "__comment": "pip install biomcp-python; 36 инструментов: PubMed, ClinicalTrials, варианты"
+      },
+      "arxiv": {
+        "command": "/home/openclaw/mailvenv/bin/arxiv-mcp-server",
+        "__comment": "pip install arxiv-mcp-server"
+      },
+      "medtools": {
+        "command": "/home/openclaw/tuvenv/bin/tooluniverse-smcp-stdio",
+        "args": [
+          "--categories",
+          "fda_drug_label",
+          "fda_drug_adverse_event",
+          "rxnorm",
+          "dailymed",
+          "medlineplus"
+        ],
+        "toolFilter": {
+          "include": [
+            "DailyMed_parse_adverse_reactions",
+            "DailyMed_search_spls",
+            "FAERS_search_adverse_event_reports",
+            "FDA_get_adverse_reactions_by_drug_name",
+            "FDA_get_contraindications_by_drug_name",
+            "FDA_get_dosage_info_by_drug_name",
+            "FDA_get_drug_interactions_by_drug_name",
+            "FDA_get_drug_label",
+            "FDA_get_pediatric_use_by_drug_name",
+            "FDA_get_warnings_by_drug_name",
+            "FDA_search_drug_labels",
+            "MedlinePlus_connect_lookup_by_code",
+            "MedlinePlus_search_topics",
+            "RxNorm_find_rxcui",
+            "RxNorm_get_drug_info",
+            "RxNorm_get_drug_names"
+          ]
+        },
+        "__comment": "ToolUniverse в ОТДЕЛЬНОМ venv! Без toolFilter отдаст 2604 инструмента. См. addons/med-mcp/"
+      }
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "botToken": "ВАШ_ТОКЕН_ОТ_BOTFATHER",
+      "dmPolicy": "pairing"
+    }
+  }
+}

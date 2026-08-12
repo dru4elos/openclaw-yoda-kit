@@ -1,0 +1,16 @@
+[Unit]
+Description=Gmail Science Monitor — научные алерты в Telegram
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/home/knee_bot
+EnvironmentFile=/home/knee_bot/keys.env
+ExecStart=/home/knee_bot/venv/bin/python3 /home/knee_bot/gmail_science_monitor.py
+Restart=on-failure
+RestartSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
