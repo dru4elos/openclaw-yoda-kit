@@ -51,8 +51,10 @@ su - openclaw -c 'source ~/.nvm/nvm.sh 2>/dev/null; openclaw config validate 2>&
 
 # 8. кроны привязаны к background
 CRON=$(su - openclaw -c 'source ~/.nvm/nvm.sh 2>/dev/null; timeout 60 openclaw cron list 2>/dev/null')
-N=$(echo "$CRON" | grep -c background)
-[ "$N" -ge 3 ] && ok "кроны на background ($N)" || fail "кроны на background: только $N из 3"
+TOTAL=$(echo "$CRON" | tail -n +3 | grep -c .)
+ON_MAIN=$(echo "$CRON" | tail -n +3 | grep -c " main ")
+if [ "$ON_MAIN" -eq 0 ]; then ok "все кроны на background (всего: $TOTAL)"
+else fail "$ON_MAIN крон(ов) висят на main — фон получит право отправки!"; fi
 
 # 9. автокоммит workspace (история изменений)
 su - openclaw -c 'cd ~/.openclaw/workspace && git add -A >/dev/null 2>&1 && git -c user.name=smoke -c user.email=smoke@vps commit -q -m "auto: смоук-снапшот $(date +%F)" 2>/dev/null; true'
