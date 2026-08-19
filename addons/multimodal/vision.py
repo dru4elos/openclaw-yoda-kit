@@ -1,17 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Зрение для Йоды: описание присланных фото через excash Gemini 3.1 Pro.
+"""Зрение для Йоды: описание присланных фото через excash.
 OpenClaw вызывает: vision.py <путь к изображению> (плейсхолдер {{MediaPath}}).
-Печатает подробное описание в stdout — оно уходит основной модели как контекст."""
-import base64, os, sys
+Печатает подробное описание в stdout — оно уходит основной модели как контекст.
+
+⚠️ Шлюз excash отклоняет картиночные запросы примерно от 40 КБ (HTTP 400 приходит
+HTML-страницей от прокси, не от модели). Просто ужать нельзя — пропадёт мелкий текст
+на меню и документах, а это главный сценарий. Поэтому: если целиком не влезает —
+режем на перекрывающиеся плитки, читаем каждую в хорошем разрешении и сводим."""
+import base64
+import io
+import os
+import sys
+
 import requests
 
 DEBUG = "/tmp/vision_debug.log"
+BUDGET = 34 * 1024          # безопасный потолок одного запроса, байт
+MODEL = "gpt-5.6-sol"
+
+
 def dbg(m):
     try:
         open(DEBUG, "a", encoding="utf-8").write(str(m) + "\n")
     except Exception:
         pass
+
 
 ENV = {}
 _p = os.path.expanduser("~/.openclaw/.env")
@@ -40,42 +54,148 @@ PROMPT = """Опиши это изображение максимально по
 
 Пиши по-русски, структурно, без воды."""
 
-def main():
-    img = next((a for a in sys.argv[1:] if os.path.exists(a) and a.lower().endswith(IMG_EXT)), None)
-    if not img:
-        img = next((a for a in sys.argv[1:] if os.path.exists(a)), None)
-    if not img:
-        dbg(f"нет изображения argv={sys.argv}")
-        sys.exit("нет изображения")
-    if not (KEY and URL):
-        sys.exit("нет EXCASH ключей в ~/.openclaw/.env")
-    ext = os.path.splitext(img)[1].lstrip(".").lower()
-    mime = {"jpg": "jpeg", "heic": "jpeg", "heif": "jpeg"}.get(ext, ext) or "jpeg"
-    b64 = base64.b64encode(open(img, "rb").read()).decode()
-    txt = ""
-    for attempt in range(3):
-        txt = _ask(b64, mime)
-        if txt:
-            break
-        dbg(f"попытка {attempt+1}: пусто, повтор")
-    if not txt:
-        sys.exit("не удалось описать изображение")
-    dbg(f"OK {os.path.basename(img)}: {len(txt)} симв")
-    print(txt)
+TILE_PROMPT = """Это ФРАГМЕНТ {n} из {total} одного изображения (соседние фрагменты
+перекрываются). Опиши только то, что видишь в этом фрагменте.
+
+Главное — ВЕСЬ текст дословно (с переводом, если не по-русски), цены и цифры не пропускай.
+Затем кратко — что изображено. Не додумывай то, чего не видно, и не пытайся описать
+изображение целиком. Плохо читается — так и скажи."""
 
 
-def _ask(b64, mime):
-    r = requests.post(URL.rstrip("/") + "/chat/completions",
+def _encode(im, max_px, quality):
+    im2 = im.copy()
+    if im2.mode not in ("RGB", "L"):
+        im2 = im2.convert("RGB")
+    if max(im2.size) > max_px:
+        im2.thumbnail((max_px, max_px))
+    buf = io.BytesIO()
+    im2.save(buf, "JPEG", quality=quality, optimize=True)
+    return buf.getvalue(), im2.size
+
+
+def _fit(im, budget=BUDGET):
+    """Лучшее качество, влезающее в бюджет. None — если не влезает вообще."""
+    for max_px, q in ((1600, 88), (1400, 85), (1200, 82), (1000, 80),
+                      (860, 78), (720, 76), (600, 74), (480, 70)):
+        data, size = _encode(im, max_px, q)
+        if len(data) <= budget:
+            return data, size, q
+    return None, None, None
+
+
+def _ask(data, prompt):
+    r = requests.post(
+        URL.rstrip("/") + "/chat/completions",
         headers={"Authorization": "Bearer " + KEY, "Content-Type": "application/json"},
-        json={"model": "gpt-5.6-sol", "max_tokens": 8000, "temperature": 0.2,
+        json={"model": MODEL, "max_tokens": 8000, "temperature": 0.2,
               "messages": [{"role": "user", "content": [
-                  {"type": "image_url", "image_url": {"url": f"data:image/{mime};base64,{b64}"}},
-                  {"type": "text", "text": PROMPT}]}]}, timeout=240)
+                  {"type": "image_url", "image_url": {
+                      "url": "data:image/jpeg;base64," + base64.b64encode(data).decode()}},
+                  {"type": "text", "text": prompt}]}]}, timeout=240)
     r.raise_for_status()
     msg = ((r.json().get("choices") or [{}])[0] or {}).get("message") or {}
     c = msg.get("content")
     if isinstance(c, list):
         c = "\n".join(x.get("text", "") for x in c if isinstance(x, dict))
     return (c or "").strip()
+
+
+def _try(data, prompt, tag):
+    for attempt in range(2):
+        try:
+            txt = _ask(data, prompt)
+        except Exception as e:
+            code = getattr(getattr(e, "response", None), "status_code", None)
+            dbg("%s: %s%s" % (tag, type(e).__name__, " HTTP %s" % code if code else ""))
+            return ""
+        if txt:
+            return txt
+        dbg("%s: пустой ответ, повтор %d" % (tag, attempt + 1))
+    return ""
+
+
+def _tiles(im):
+    """Режем ГОРИЗОНТАЛЬНЫМИ полосами всегда — строки текста (меню, документы,
+    ценники) идут поперёк, и вертикальный разрез оторвал бы названия от цен.
+    Перекрытие 12%, чтобы строка на стыке не потерялась."""
+    w, h = im.size
+    # сколько полос нужно, чтобы каждая влезла в бюджет с приличным разрешением
+    area = w * h
+    n = 2
+    if area > 1_600_000:
+        n = 3
+    if area > 3_500_000:
+        n = 4
+    if h > w * 2:                                # очень вытянутая вертикаль
+        n = max(n, 3)
+    over = 0.12
+    step = h / n
+    out = []
+    for i in range(n):
+        top = max(0, int(step * i - step * over))
+        bot = min(h, int(step * (i + 1) + step * over))
+        out.append(im.crop((0, top, w, bot)))
+    return out
+
+
+def main():
+    img = next((a for a in sys.argv[1:] if os.path.exists(a) and a.lower().endswith(IMG_EXT)), None)
+    if not img:
+        img = next((a for a in sys.argv[1:] if os.path.exists(a)), None)
+    if not img:
+        dbg("нет изображения argv=%s" % sys.argv)
+        sys.exit("нет изображения")
+    if not (KEY and URL):
+        sys.exit("нет EXCASH ключей в ~/.openclaw/.env")
+
+    from PIL import Image
+    im = Image.open(img)
+    dbg("=== %s %s ===" % (os.path.basename(img), im.size))
+
+    # 1) пробуем целиком в максимальном качестве, влезающем в бюджет
+    data, size, q = _fit(im)
+    if data:
+        dbg("целиком %s q%s -> %d КБ" % (size, q, len(data) // 1024))
+        txt = _try(data, PROMPT, "целиком")
+        # если ужалось сильно, мелкий текст мог потеряться — но пробуем как есть
+        if txt and (max(size) >= 860 or max(im.size) <= 900):
+            dbg("OK целиком: %d симв" % len(txt))
+            print(txt)
+            return
+        if txt:
+            dbg("целиком прочитано, но мелко (%s) — уточняю плитками" % (size,))
+            whole = txt
+        else:
+            whole = ""
+    else:
+        whole = ""
+        dbg("целиком не влезает даже в 480px")
+
+    # 2) плитки
+    parts = _tiles(im)
+    dbg("режу на %d плиток" % len(parts))
+    chunks = []
+    for i, tile in enumerate(parts, 1):
+        tdata, tsize, tq = _fit(tile)
+        if not tdata:
+            dbg("плитка %d не влезла" % i)
+            continue
+        dbg("плитка %d %s q%s -> %d КБ" % (i, tsize, tq, len(tdata) // 1024))
+        t = _try(tdata, TILE_PROMPT.format(n=i, total=len(parts)), "плитка %d" % i)
+        if t:
+            chunks.append("### Фрагмент %d из %d\n%s" % (i, len(parts), t))
+
+    if not chunks:
+        if whole:
+            print(whole)
+            return
+        sys.exit("не удалось описать изображение (шлюз отклонил все варианты)")
+
+    head = ("Изображение разобрано по фрагментам (целиком не проходит через шлюз — "
+            "ограничение на размер запроса). Ниже части сверху вниз; "
+            "соседние фрагменты перекрываются, повторы — это одно и то же место.\n")
+    dbg("OK плитками: %d фрагментов" % len(chunks))
+    print(head + "\n\n".join(chunks))
+
 
 main()
