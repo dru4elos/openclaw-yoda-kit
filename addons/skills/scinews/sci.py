@@ -10,6 +10,7 @@ Word-разбор статьи по запросу через excash gemini-3.1-
   sci.py word "<запрос или PMID/DOI>" [--pmid 123] [--doi 10.x/y] [--send]
 """
 import argparse, html, json, os, re, subprocess, sys, tempfile
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from urllib.parse import quote
 import requests
@@ -374,6 +375,128 @@ def make_word(spec, pmid=None, doi=None, send=False):
     else:
         print(path + (f"  [полный текст: {ft_src}]" if ft_src else "  [по абстракту]"))
 
+
+# Отправители научных алертов (совпадение по адресу ИЛИ имени)
+_ALERT_SENDERS = (
+    "elsevier", "nature.com", "springer", "wiley", "lww.com", "ovid", "jbjs",
+    "bmj.com", "sagepub", "tandfonline", "karger", "thieme", "scholar.google",
+    "sciencedirect", "pubmed", "ncbi.nlm.nih.gov", "researchgate", "frontiersin",
+    "mdpi", "oup.com", "oxfordjournals", "jamanetwork", "nejm", "cochrane",
+    "journals", "alerts", "toc-alert", "e-alert", "editorialmanager",
+)
+
+
+def _gmail_alert_bodies(hours):
+    """Письма-алерты из Gmail за N часов, с ТЕЛОМ (их мало — быстро)."""
+    import email as _em
+    import email.utils as _eu
+    import imaplib
+    from email.header import decode_header, make_header
+
+    user = ENV.get("GMAIL_EMAIL") or ENV.get("SCIENCE_GMAIL_USER")
+    pwd = ENV.get("GMAIL_APP_PASSWORD") or ENV.get("SCIENCE_GMAIL_PASSWORD")
+    if not (user and pwd):
+        sys.exit("нет доступа к Gmail (GMAIL_EMAIL/GMAIL_APP_PASSWORD в ~/.openclaw/.env) — "
+                 "научные алерты прочитать нечем. Скажи это доктору, не выдумывай статьи.")
+
+    def _dec(v):
+        try:
+            return str(make_header(decode_header(v or "")))
+        except Exception:
+            return v or ""
+
+    M = imaplib.IMAP4_SSL("imap.gmail.com", 993)
+    M.login(user, pwd)
+    M.select("INBOX", readonly=True)
+    since = (datetime.now() - timedelta(hours=hours + 24)).strftime("%d-%b-%Y")
+    _, d = M.uid("search", None, f"(SINCE {since})")
+    uids = d[0].split()[-300:]
+    if not uids:
+        M.logout()
+        return []
+
+    # 1) заголовки пачкой — отбираем только алерты
+    _, data = M.uid("fetch", b",".join(uids),
+                    "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+    import re as _re
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    picked = []
+    for part in data:
+        if not isinstance(part, tuple) or len(part) < 2:
+            continue
+        head = part[0].decode(errors="replace") if isinstance(part[0], bytes) else str(part[0])
+        mu = _re.search(r"UID (\d+)", head)
+        m = _em.message_from_bytes(part[1])
+        frm, subj = _dec(m.get("From")), _dec(m.get("Subject"))
+        try:
+            dt = _eu.parsedate_to_datetime(m.get("Date"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if dt < cutoff:
+                continue
+        except Exception:
+            pass
+        hay = (frm + " " + subj).lower()
+        if any(k in hay for k in _ALERT_SENDERS):
+            picked.append((mu.group(1) if mu else None, frm, subj))
+
+    # 2) тела только у отобранных
+    out = []
+    for uid, frm, subj in picked:
+        if not uid:
+            continue
+        _, bd = M.uid("fetch", uid.encode(), "(BODY.PEEK[])")
+        if not bd or bd[0] is None:
+            continue
+        msg = _em.message_from_bytes(bd[0][1])
+        body = ""
+        for part in msg.walk() if msg.is_multipart() else [msg]:
+            if part.get_content_type() in ("text/plain", "text/html"):
+                try:
+                    raw = part.get_payload(decode=True) or b""
+                    txt = raw.decode(part.get_content_charset() or "utf-8", errors="replace")
+                except Exception:
+                    continue
+                if part.get_content_type() == "text/html":
+                    txt = _re.sub(r"<[^>]+>", " ", txt)
+                body += txt + "\n"
+        body = _re.sub(r"[ \t]+", " ", _re.sub(r"\n{3,}", "\n\n", body)).strip()
+        out.append({"from": frm, "subject": subj, "body": body[:14000]})
+    M.logout()
+    return out
+
+
+def cmd_alerts(a):
+    """Все статьи из научных писем за сутки + мини-описание каждой."""
+    mails = _gmail_alert_bodies(a.hours)
+    if not mails:
+        print(f"Научных писем за последние {a.hours} ч в Gmail не пришло. "
+              f"Так и скажи доктору — не подменяй это поиском по PubMed.")
+        return
+    print(f"Научных писем за {a.hours} ч: {len(mails)}")
+    for m in mails:
+        print(f"  • {m['subject'][:90]}  ({m['from'][:45]})")
+    print("=" * 60)
+
+    blob = "\n\n".join(
+        f"=== ПИСЬМО: {m['subject']}\nОт: {m['from']}\n{m['body']}" for m in mails)
+    prompt = (
+        "Ниже письма-алерты научных журналов, пришедшие врачу (детский "
+        "травматолог-ортопед) за сутки.\n\n"
+        "Выпиши ВСЕ статьи, которые в них упомянуты — не выборку, а все. "
+        "По каждой строго в формате:\n\n"
+        "🔬 <название по-русски>\n"
+        "   <журнал>, <год> · <оригинальное название на английском>\n"
+        "   <мини-описание в 1-2 предложения: о чём статья и что нашли>\n"
+        "   <оценка: 🔥 прорыв / ⭐ важно / 📌 интересно / ⬜ мимо интересов>\n\n"
+        "Правила: ничего не выдумывай — если в письме только заголовок без "
+        "аннотации, так и пиши «аннотации в письме нет, только заголовок». "
+        "Сгруппируй по журналам. В конце строкой: сколько всего статей и какие "
+        "1-3 стоит прочитать первыми именно детскому ортопеду-травматологу.\n\n"
+        + blob)
+    print(llm([{"role": "user", "content": prompt}], max_tokens=14000, temperature=0.2))
+
+
 def cmd_fulltext(a):
     art = epmc_one(a.query, pmid=a.pmid, doi=a.doi)
     if not art:
@@ -398,6 +521,8 @@ def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("search"); s.add_argument("query"); s.add_argument("--n", type=int, default=8)
+    al = sub.add_parser("alerts", help="все статьи из научных писем за сутки")
+    al.add_argument("--hours", type=int, default=24)
     ft = sub.add_parser("fulltext"); ft.add_argument("query", nargs="?", default="")
     ft.add_argument("--pmid"); ft.add_argument("--doi")
     ft.add_argument("--chars", type=int, default=20000)
@@ -406,6 +531,8 @@ def main():
     w.add_argument("--pmid"); w.add_argument("--doi"); w.add_argument("--pdf")
     w.add_argument("--send", action="store_true")
     a = ap.parse_args()
+    if a.cmd == "alerts":
+        cmd_alerts(a); return
     if a.cmd == "fulltext":
         cmd_fulltext(a); return
     if a.cmd == "word" and a.pdf:

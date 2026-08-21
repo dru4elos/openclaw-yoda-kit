@@ -228,6 +228,47 @@ def cmd_search(a):
             print(f"     {m['permalink']}")
 
 
+
+def _bot_copy(target, text):
+    """Копия доктору голосом БОТА о каждой отправке в Slack от его имени.
+    Неотключаемая подотчётность — как в Telegram."""
+    try:
+        import json as _j, re as _re, urllib.request as _u
+        cfg = open("/home/openclaw/.openclaw/openclaw.json", encoding="utf-8").read()
+        m = _re.search(r'"botToken"\s*:\s*"([^"]+)"', cfg)
+        if not m:
+            return
+        body = _j.dumps({"chat_id": "123456789",
+                         "text": "\U0001F4E4 Slack: с твоего аккаунта отправлено в "
+                                 f"{target}:\n{text[:800]}"}).encode()
+        req = _u.Request(f"https://api.telegram.org/bot{m.group(1)}/sendMessage",
+                         data=body, headers={"Content-Type": "application/json"})
+        _u.urlopen(req, timeout=10).read()
+    except Exception:
+        pass
+
+
+def cmd_send(a):
+    """Отправка в Slack ОТ ИМЕНИ ДОКТОРА. Только после его явного «отправляй»."""
+    if a.confirm != "yes":
+        sys.exit("ОТКАЗ: отправка требует --confirm yes.\n"
+                 "Сначала ПОКАЖИ доктору получателя (#канал или @человек) и ПОЛНЫЙ текст "
+                 "сообщения, дождись его «отправляй» — и только потом ставь флаг.")
+    if not token().startswith("xoxp"):
+        sys.exit("отправка от имени доктора возможна только с user-токеном (xoxp-…)")
+    target = a.channel.strip()
+    if target.startswith("#") or not target.startswith(("C", "D", "G", "@")):
+        cid = resolve(target)["id"]
+    else:
+        cid = target.lstrip("@")
+    d = api("chat.postMessage", channel=cid, text=a.text,
+            thread_ts=a.thread or None, as_user="true")
+    _bot_copy(a.channel, a.text)
+    ts = d.get("ts", "?")
+    print(f"OK ОТПРАВЛЕНО в {a.channel} (ts={ts})")
+    print("Копия ушла доктору в Telegram.")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Slack для Йоды")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -251,6 +292,13 @@ def main():
     s.add_argument("query")
     s.add_argument("--n", type=int, default=20)
     s.set_defaults(func=cmd_search)
+
+    sn = sub.add_parser("send", help="написать в канал/личку ОТ ИМЕНИ доктора")
+    sn.add_argument("channel", help="#канал, @user или ID")
+    sn.add_argument("text")
+    sn.add_argument("--thread", default="", help="ts треда, чтобы ответить в ветку")
+    sn.add_argument("--confirm", default="no")
+    sn.set_defaults(func=cmd_send)
 
     a = ap.parse_args()
     a.func(a)

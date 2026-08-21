@@ -57,6 +57,95 @@ async def me():
     return {"ok": True, "username": getattr(u, "username", None), "id": u.id}
 
 
+@app.get("/peek_full")
+async def peek_full(chat: str, mid: int):
+    """Отладка: полный to_dict одного сообщения (не-null поля)."""
+    cl = await client()
+    ent = await cl.get_entity(chat if not chat.lstrip("-").isdigit() else int(chat))
+    m = await cl.get_messages(ent, ids=int(mid))
+    if m is None:
+        return {"ok": False, "missing": True}
+    def clean(o, depth=0):
+        if depth > 6:
+            return "…"
+        if isinstance(o, dict):
+            return {k: clean(v, depth + 1) for k, v in o.items()
+                    if v not in (None, False, [], {}, "")}
+        if isinstance(o, list):
+            return [clean(x, depth + 1) for x in o[:5]]
+        if isinstance(o, (bytes, bytearray)):
+            return f"<bytes {len(o)}>"
+        return str(o)[:200]
+    return {"ok": True, "dict": clean(m.to_dict())}
+
+
+@app.get("/peek")
+async def peek(chat: str, ids: str):
+    """Отладка: сырые атрибуты конкретных сообщений (тип медиа, альбом, entities)."""
+    cl = await client()
+    ent = await cl.get_entity(chat if not chat.lstrip("-").isdigit() else int(chat))
+    want = [int(x) for x in ids.split(",") if x.strip()]
+    out = []
+    msgs = await cl.get_messages(ent, ids=want)
+    for m in (msgs if isinstance(msgs, list) else [msgs]):
+        if m is None:
+            out.append({"id": None, "missing": True})
+            continue
+        out.append({
+            "id": m.id,
+            "cls": type(m).__name__,
+            "text_len": len(m.message or ""),
+            "raw_text_prev": (m.message or "")[:80],
+            "media_cls": type(m.media).__name__ if m.media else None,
+            "grouped_id": getattr(m, "grouped_id", None),
+            "entities": len(m.entities or []),
+            "views": getattr(m, "views", None),
+            "post_author": getattr(m, "post_author", None),
+            "reply_to": bool(getattr(m, "reply_to", None)),
+        })
+    return {"ok": True, "items": out}
+
+
+def _flatten_rich_text(t) -> str:
+    """RichText-дерево (TextConcat/TextBold/TextPlain/TextCustomEmoji…) → строка."""
+    if t is None:
+        return ""
+    if isinstance(t, str):
+        return t
+    out = []
+    inner = getattr(t, "text", None)
+    if isinstance(inner, str):
+        out.append(inner)
+    elif inner is not None:
+        out.append(_flatten_rich_text(inner))
+    for sub in (getattr(t, "texts", None) or []):
+        out.append(_flatten_rich_text(sub))
+    if not out:
+        alt = getattr(t, "alt", None)  # TextCustomEmoji → сам эмодзи
+        if alt:
+            out.append(alt)
+    return "".join(out)
+
+
+def _rich_text(m) -> str:
+    """Текст сообщения: обычный ИЛИ собранный из блоков RichMessage (Instant-View)."""
+    t = m.message or ""
+    if t:
+        return t
+    rm = getattr(m, "rich_message", None)
+    if not rm:
+        return ""
+    parts = []
+    for b in (getattr(rm, "blocks", None) or []):
+        piece = _flatten_rich_text(getattr(b, "text", None))
+        if not piece:
+            cap = getattr(b, "caption", None)
+            piece = _flatten_rich_text(getattr(cap, "text", None)) if cap else ""
+        if piece and piece.strip():
+            parts.append(piece.strip())
+    return "\n\n".join(parts)
+
+
 @app.get("/read")
 async def read(chat: str, limit: int = 50, media: int = 0):
     """Прочитать последние сообщения канала/чата — для радаров тем и хуков."""
@@ -75,7 +164,7 @@ async def read(chat: str, limit: int = 50, media: int = 0):
             "fwd": getattr(m, "fwd_from", None) is not None,
             "reactions": sum((getattr(x, "count", 0) or 0)
                              for x in (getattr(getattr(m, "reactions", None), "results", None) or [])),
-            "text": (m.message or "")[:4000],
+            "text": _rich_text(m)[:4000],
             "out": bool(getattr(m, "out", False)),
             "has_media": bool(getattr(m, "media", None)),
             "sender": _who(await m.get_sender()) if getattr(m, "sender_id", None) else "",
@@ -98,10 +187,27 @@ async def dialogs(limit: int = 100):
     cl = await client()
     out = []
     async for d in cl.iter_dialogs(limit=min(int(limit), 500)):
+        _m = getattr(d, "message", None)
+        # out=True -> последним писал доктор; False -> ждут его ответа
+        _out = bool(getattr(_m, "out", False)) if _m else None
+        _sender = ""
+        try:
+            _s = getattr(_m, "sender", None)
+            if _s is not None:
+                _sender = (getattr(_s, "first_name", "") or "") + " " + (getattr(_s, "last_name", "") or "")
+                _sender = _sender.strip() or (getattr(_s, "title", "") or getattr(_s, "username", "") or "")
+        except Exception:
+            pass
+        _ent = getattr(d, "entity", None)
+        _is_bot = bool(getattr(_ent, "bot", False)) if _ent is not None else False
+        _is_self = bool(getattr(_ent, "is_self", False)) if _ent is not None else False
         out.append({"id": d.id, "name": d.name, "is_channel": d.is_channel,
+                    "is_group": bool(getattr(d, "is_group", False)),
+                    "is_bot": _is_bot, "is_self": _is_self,
                     "unread": getattr(d, "unread_count", 0) or 0,
                     "date": d.date.isoformat() if d.date else None,
-                    "last": ((d.message.message or "") if getattr(d, "message", None) else "")[:200]})
+                    "out": _out, "sender": _sender,
+                    "last": ((_m.message or "") if _m else "")[:300]})
     return {"ok": True, "count": len(out), "dialogs": out}
 
 
@@ -116,6 +222,60 @@ async def send(payload: dict = Body(...)):
                               text, parse_mode=payload.get("parse_mode", "html"),
                               link_preview=bool(payload.get("link_preview", False)))
     return {"ok": True, "message_id": m.id}
+
+
+@app.get("/buttons")
+async def buttons(chat: str, limit: int = 10):
+    """Последние сообщения диалога с inline-кнопками (текст + callback_data) — для e2e-проверок ботов."""
+    cl = await client()
+    ent = await cl.get_entity(chat if not chat.lstrip("-").isdigit() else int(chat))
+    out = []
+    async for m in cl.iter_messages(ent, limit=min(int(limit), 50)):
+        rows = []
+        for row in (getattr(m, "buttons", None) or []):
+            rows.append([
+                {
+                    "text": getattr(b, "text", ""),
+                    "data": (b.data.decode("utf-8", "replace")
+                             if getattr(b, "data", None) else None),
+                    "url": getattr(b, "url", None),
+                }
+                for b in row
+            ])
+        out.append({"id": m.id, "out": bool(getattr(m, "out", False)),
+                    "text": (_rich_text(m) or "")[:600], "buttons": rows,
+                    "doc_name": (getattr(getattr(m, "file", None), "name", None) or None)})
+    return {"ok": True, "chat": chat, "messages": out}
+
+
+@app.post("/delete")
+async def delete_msgs(payload: dict = Body(...)):
+    """Удалить сообщения в диалоге (у обеих сторон) — уборка после e2e-тестов ботов."""
+    cl = await client()
+    chat = payload.get("chat")
+    ids = payload.get("ids") or []
+    if not chat or not ids:
+        raise HTTPException(400, "нужны chat и ids[]")
+    ent = await cl.get_entity(str(chat) if not str(chat).lstrip("-").isdigit() else int(chat))
+    ids = [int(x) for x in ids][:100]
+    await cl.delete_messages(ent, ids, revoke=True)
+    return {"ok": True, "deleted": len(ids)}
+
+
+@app.get("/click")
+async def click(chat: str, msg_id: int, data: str):
+    """Нажать inline-кнопку с callback_data=data в сообщении msg_id — e2e-тест бот-флоу."""
+    cl = await client()
+    ent = await cl.get_entity(chat if not chat.lstrip("-").isdigit() else int(chat))
+    msg = await cl.get_messages(ent, ids=int(msg_id))
+    if not msg:
+        raise HTTPException(404, "сообщение не найдено")
+    try:
+        r = await msg.click(data=data.encode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(502, f"click failed: {str(exc)[:200]}")
+    alert = getattr(r, "message", None) if r is not None else None
+    return {"ok": True, "alert": alert}
 
 
 @app.post("/album")
@@ -244,7 +404,8 @@ async def sendfile(payload: dict = Body(...)):
     if not chat or not path or not os.path.exists(path):
         raise HTTPException(400, "нужны chat и существующий path")
     m = await cl.send_file(chat if not str(chat).lstrip("-").isdigit() else int(chat),
-                           path, caption=(payload.get("caption") or "")[:1024])
+                           path, caption=(payload.get("caption") or "")[:1024],
+                           voice_note=bool(payload.get("voice")))
     return {"ok": True, "message_id": getattr(m, "id", None)}
 
 

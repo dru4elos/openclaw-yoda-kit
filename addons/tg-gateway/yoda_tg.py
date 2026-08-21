@@ -201,11 +201,11 @@ def _resolve_strict(chat):
     sys.exit(f"чат «{chat}» не найден — уточни @username или id")
 
 
-OWNER_ID = "123456789"  # <-- ваш Telegram ID
+OWNER_ID = "123456789"
 
 def _bot_copy(target, text):
     """Копия доктору голосом БОТА о каждой отправке с его личного аккаунта.
-    Неотключаемая подотчётность после инцидента (агент сам ответил третьему лицу)."""
+    Неотключаемая подотчётность после инцидента 07.08 (автоответ Наталье Карловой)."""
     try:
         import json as _j, re as _re, urllib.request as _u
         cfg = open("/home/openclaw/.openclaw/openclaw.json", encoding="utf-8").read()
@@ -220,6 +220,127 @@ def _bot_copy(target, text):
         _u.urlopen(req, timeout=10).read()
     except Exception:
         pass  # копия best-effort: сбой уведомления не должен ломать отправку
+
+
+
+# Служебные отправители: их «неответ» доктора не волнует
+_NOISE = ("telegram", "notifications", "spambot", "bot", "канал", "channel",
+          "vip сигналы", "сигналы", "reminders", "яндекс", "ozon", "wildberries",
+          "сбер", "тинькофф", "т-банк", "госуслуги", "delivery", "доставка",
+          # собственные сервисы доктора — они уведомляют, а не ждут ответа
+          "йода", "докмед", "свойврач", "доктор семенов", "симулейтив",
+          "избранное", "saved messages")
+
+# Маркеры обещаний в СВОИХ сообщениях
+_PROMISE = ("скину", "пришлю", "отправлю", "сделаю", "посмотрю", "гляну", "проверю",
+            "напишу", "перезвоню", "позвоню", "уточню", "разберусь", "займусь",
+            "подготовлю", "договорюсь", "завтра", "на неделе", "чуть позже",
+            "как освобожусь", "вечером", "обещаю", "к понедельнику", "до конца недели")
+
+
+def _noisy(name):
+    n = (name or "").lower()
+    return any(w in n for w in _NOISE)
+
+
+def cmd_pending(a):
+    """Где доктору написали и он не ответил + его собственные обещания.
+
+    Массовые группы (болталки, новостные) отсеиваются: «неответ» там ничего не
+    значит. Группа попадает в сводку ТОЛЬКО если в ней к доктору обратились —
+    упомянули @username, ответили на его сообщение или назвали по имени.
+    Скрипт даёт ФАКТЫ, выводы делает Йода."""
+    me = gw("/me") or {}
+    my_id, my_user = me.get("id"), (me.get("username") or "").lower()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=a.days)
+    dialogs = gw("/dialogs", params={"limit": a.scan}).get("dialogs") or []
+
+    personal, group_hits, skipped_mass = [], [], 0
+    for d in dialogs:
+        name = d.get("name") or ""
+        if d.get("is_channel") and not d.get("is_group"):
+            continue                                   # каналы-ленты
+        if _noisy(name) or d.get("is_bot") or d.get("is_self"):
+            continue                                   # боты и Избранное ответа не ждут
+        try:
+            when = datetime.fromisoformat(d["date"]) if d.get("date") else None
+        except Exception:
+            when = None
+        if when and when < cutoff:
+            continue
+
+        if d.get("is_group"):
+            # массовые болталки не трогаем, если там нет обращения к доктору
+            if (d.get("unread") or 0) > a.mass:
+                skipped_mass += 1
+                continue
+            msgs = gw("/read", params={"chat": str(d["id"]), "limit": a.ctx * 3}).get("messages") or []
+            hit = None
+            for m in msgs:
+                if m.get("out"):
+                    continue
+                txt = (m.get("text") or "").lower()
+                mentioned = (my_user and ("@" + my_user) in txt)
+                replied = str(m.get("reply_to_user_id") or "") == str(my_id)
+                if mentioned or replied or "андрей анатол" in txt or "@доктор" in txt:
+                    hit = m
+                    break
+            if hit:
+                group_hits.append((d, msgs, hit))
+            continue
+
+        if d.get("out") is False:                      # личка: последним писали ему
+            personal.append(d)
+
+    personal.sort(key=lambda x: x.get("date") or "", reverse=True)
+    print(f"НЕОТВЕЧЕННОЕ И ОБЕЩАННОЕ — окно {a.days} дн., просмотрено диалогов: {len(dialogs)}")
+    print("=" * 60)
+
+    def _ago(iso):
+        try:
+            h = (datetime.now(timezone.utc) - datetime.fromisoformat(iso)).total_seconds() / 3600
+            return f"{int(h)} ч назад" if h < 48 else f"{int(h // 24)} дн назад"
+        except Exception:
+            return ""
+
+    def _dump(msgs, chat_name):
+        for m in msgs[::-1]:
+            who = "ДОКТОР" if m.get("out") else (m.get("sender") or chat_name)[:22]
+            txt = (m.get("text") or m.get("caption") or "[медиа]").replace("\n", " ")[:230]
+            mark = ""
+            if m.get("out") and any(p in txt.lower() for p in _PROMISE):
+                mark = "  ⚑ОБЕЩАНИЕ"
+            print(f"    {_when(m.get('date'))} {who}: {txt}{mark}")
+
+    if personal:
+        print(f"\n## ЛИЧНЫЕ — ЖДУТ ОТВЕТА ({len(personal)})\n")
+        for d in personal[: a.max]:
+            unread = f", непрочитано {d['unread']}" if d.get("unread") else ""
+            print(f"### {d['name']} — {_ago(d.get('date'))}{unread}")
+            msgs = gw("/read", params={"chat": str(d["id"]), "limit": a.ctx}).get("messages") or []
+            _dump(msgs, d["name"])
+            print()
+
+    if group_hits:
+        print(f"\n## В ГРУППАХ ОБРАТИЛИСЬ К ДОКТОРУ ({len(group_hits)})\n")
+        for d, msgs, hit in group_hits[: a.max]:
+            print(f"### {d['name']} — обращение {_ago(hit.get('date'))}")
+            print(f"    ОБРАЩЕНИЕ: {(hit.get('sender') or '?')}: "
+                  f"{(hit.get('text') or '')[:230]}")
+            _dump(msgs[: a.ctx], d["name"])
+            print()
+
+    if not personal and not group_hits:
+        print("\nЧисто: в личке везде последнее слово за доктором, "
+              "в группах к нему не обращались.")
+    if skipped_mass:
+        print(f"(пропущено массовых чатов-болталок: {skipped_mass})")
+
+    print("\n" + "=" * 60)
+    print("Как читать: ⚑ОБЕЩАНИЕ — это слова САМОГО доктора, похожие на обязательство. "
+          "Проверь по переписке, закрыл он его или нет, и напомни только про реально "
+          "незакрытое. Обязательств, которых нет в тексте, не выдумывай. "
+          "Отвечать за доктора нельзя — только показать ему список.")
 
 
 def cmd_send(a):
@@ -259,6 +380,14 @@ def main():
     md = sub.add_parser("media"); md.add_argument("chat"); md.add_argument("--n", type=int, default=5)
     dg = sub.add_parser("digest"); dg.add_argument("--folder", action="append")
     dg.add_argument("--hours", type=int, default=24)
+    pn = sub.add_parser("pending", help="неотвеченное и обещанное")
+    pn.add_argument("--days", type=int, default=7, help="окно активности чатов")
+    pn.add_argument("--scan", type=int, default=120, help="сколько диалогов просмотреть")
+    pn.add_argument("--max", type=int, default=12, help="сколько чатов раскрыть подробно")
+    pn.add_argument("--ctx", type=int, default=8, help="сообщений контекста на чат")
+    pn.add_argument("--mass", type=int, default=300,
+                    help="группы с непрочитанным выше этого — считать болталкой")
+
     sn = sub.add_parser("send"); sn.add_argument("chat"); sn.add_argument("text")
     sn.add_argument("--confirm", default="no")
     sf = sub.add_parser("sendfile"); sf.add_argument("chat"); sf.add_argument("path")
@@ -266,7 +395,8 @@ def main():
     a = ap.parse_args()
 
     {"dialogs": cmd_dialogs, "read": cmd_read, "search": cmd_search, "media": cmd_media,
-     "digest": cmd_digest, "send": cmd_send, "sendfile": cmd_sendfile}[a.cmd](a)
+     "digest": cmd_digest, "pending": cmd_pending,
+     "send": cmd_send, "sendfile": cmd_sendfile}[a.cmd](a)
 
 
 if __name__ == "__main__":
