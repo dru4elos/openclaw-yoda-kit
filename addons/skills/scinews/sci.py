@@ -9,7 +9,7 @@ Word-разбор статьи по запросу через excash gemini-3.1-
   sci.py search "<запрос>" [--n 8]
   sci.py word "<запрос или PMID/DOI>" [--pmid 123] [--doi 10.x/y] [--send]
 """
-import argparse, html, json, os, re, subprocess, sys, tempfile
+import argparse, html, json, os, re, subprocess, sys, tempfile, time
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from urllib.parse import quote
@@ -466,35 +466,144 @@ def _gmail_alert_bodies(hours):
     return out
 
 
+def _norm_title(t):
+    return re.sub(r"[^a-z0-9 ]+", " ", (t or "").lower()).split()
+
+
+def _same_article(want, got):
+    """Одна ли это статья. Пересечение делим на БОЛЬШЕЕ множество слов: иначе
+    короткий чужой заголовок, целиком вложенный в наш длинный, даст ложные 100%."""
+    stop = {"the", "a", "an", "of", "in", "and", "for", "on", "with", "to", "from",
+            "by", "at", "is", "are", "study", "case", "report", "review", "using",
+            "its", "this", "that", "how", "why", "could", "would", "should"}
+    a = set(_norm_title(want)) - stop
+    b = set(_norm_title(got)) - stop
+    if not a or not b:
+        return False
+    inter = len(a & b)
+    return inter / max(len(a), len(b)) >= 0.7 and inter >= 4
+
+
+def _resolve_link(title_en):
+    """Ссылка по английскому названию: Europe PMC -> doi.org/pubmed.
+    В письмах ссылки битые (quoted-printable, трекеры), поэтому резолвим сами —
+    но отдаём результат ТОЛЬКО если название реально совпало."""
+    if not title_en or len(title_en) < 12:
+        return ""
+    try:
+        for query in (f'TITLE:"{title_en[:180]}"', title_en[:180]):
+            for art in (epmc_search(query, n=3) or []):
+                m = fmt_meta(art)
+                if not _same_article(title_en, m.get("title", "")):
+                    continue
+                if m.get("doi"):
+                    return "https://doi.org/" + m["doi"]
+                if m.get("pmid"):
+                    return f"https://pubmed.ncbi.nlm.nih.gov/{m['pmid']}/"
+    except Exception:
+        pass
+    return ""
+
+
 def cmd_alerts(a):
-    """Все статьи из научных писем за сутки + мини-описание каждой."""
+    """Все статьи из научных писем за сутки: ТОП-10 подробно + остальные по журналам."""
     mails = _gmail_alert_bodies(a.hours)
     if not mails:
         print(f"Научных писем за последние {a.hours} ч в Gmail не пришло. "
               f"Так и скажи доктору — не подменяй это поиском по PubMed.")
         return
-    print(f"Научных писем за {a.hours} ч: {len(mails)}")
+    print(f"НАУКА ЗА {a.hours} Ч — писем: {len(mails)}")
     for m in mails:
-        print(f"  • {m['subject'][:90]}  ({m['from'][:45]})")
-    print("=" * 60)
+        print(f"  • {m['subject'][:95]}")
+    print("=" * 62)
 
-    blob = "\n\n".join(
-        f"=== ПИСЬМО: {m['subject']}\nОт: {m['from']}\n{m['body']}" for m in mails)
-    prompt = (
-        "Ниже письма-алерты научных журналов, пришедшие врачу (детский "
-        "травматолог-ортопед) за сутки.\n\n"
-        "Выпиши ВСЕ статьи, которые в них упомянуты — не выборку, а все. "
-        "По каждой строго в формате:\n\n"
-        "🔬 <название по-русски>\n"
-        "   <журнал>, <год> · <оригинальное название на английском>\n"
-        "   <мини-описание в 1-2 предложения: о чём статья и что нашли>\n"
-        "   <оценка: 🔥 прорыв / ⭐ важно / 📌 интересно / ⬜ мимо интересов>\n\n"
-        "Правила: ничего не выдумывай — если в письме только заголовок без "
-        "аннотации, так и пиши «аннотации в письме нет, только заголовок». "
-        "Сгруппируй по журналам. В конце строкой: сколько всего статей и какие "
-        "1-3 стоит прочитать первыми именно детскому ортопеду-травматологу.\n\n"
-        + blob)
-    print(llm([{"role": "user", "content": prompt}], max_tokens=14000, temperature=0.2))
+    def _extract(mail):
+        """Разбор ОДНОГО письма. Шлюз отдаёт 504 на большом запросе, поэтому
+        письма идут по одному, а не одним блобом."""
+        prompt = (
+            "Ниже письмо-алерт научного журнала, пришедшее врачу — ДЕТСКОМУ "
+            "ТРАВМАТОЛОГУ-ОРТОПЕДУ (интересы: детская травма и ортопедия, переломы, "
+            "ПКС/мениск, дисплазия ТБС, сколиоз, плоскостопие, артроскопия, "
+            "реабилитация, детская хирургия, ИИ в медицине).\n\n"
+            "Выпиши ВСЕ статьи из письма — не выборку. Верни СТРОГО JSON-массив, "
+            "без пояснений и без markdown-ограды. Элемент:\n"
+            '{"ru":"название по-русски","en":"оригинальное название как в письме",'
+            '"journal":"журнал","year":"год","desc":"2-3 предложения: о чём работа, '
+            'какой дизайн, что нашли — строго по тому, что есть в письме",'
+            '"rating":"fire|star|pin|none","why":"одна фраза: чем полезно именно '
+            'детскому травматологу-ортопеду; для rating none — пустая строка"}\n\n'
+            "rating: fire = меняет практику/прорыв; star = важно и близко к его теме; "
+            "pin = интересно, косвенно; none = мимо интересов.\n"
+            "Только заголовок без аннотации — в desc так и напиши "
+            "«в письме только заголовок, без аннотации». Не выдумывай.\n\n"
+            f"=== ПИСЬМО: {mail['subject']}\nОт: {mail['from']}\n{mail['body'][:11000]}")
+        raw = llm([{"role": "user", "content": prompt}], max_tokens=12000, temperature=0.2)
+        t = (raw or "").strip()
+        if t.startswith("```"):
+            t = t.split("```")[1]
+            t = t[4:] if t.lower().startswith("json") else t
+        try:
+            return json.loads(t[t.find("["): t.rfind("]") + 1])
+        except Exception as e:
+            print(f"  ⚠️ письмо «{mail['subject'][:50]}» разобрать не удалось: {e}")
+            return []
+
+    arts = []
+    for mail in mails:
+        got = _extract(mail)
+        print(f"  разобрано из «{mail['subject'][:55]}»: {len(got)} статей")
+        arts += got
+    if not arts:
+        print("Ни одной статьи разобрать не удалось. Скажи доктору честно, "
+              "не подменяй это поиском по PubMed.")
+        return
+
+    order = {"fire": 0, "star": 1, "pin": 2, "none": 3}
+    arts.sort(key=lambda x: order.get((x.get("rating") or "none").lower(), 3))
+    icon = {"fire": "🔥", "star": "⭐", "pin": "📌", "none": "⬜"}
+
+    top = [x for x in arts if (x.get("rating") or "none").lower() != "none"][: a.top]
+    rest = [x for x in arts if x not in top]
+
+    print(f"\nВСЕГО СТАТЕЙ: {len(arts)}  |  релевантных: "
+          f"{sum(1 for x in arts if (x.get('rating') or 'none').lower() != 'none')}\n")
+
+    print(f"## ТОП-{len(top)} ДЛЯ ДЕТСКОГО ОРТОПЕДА-ТРАВМАТОЛОГА\n")
+    for i, x in enumerate(top, 1):
+        link = _resolve_link(x.get("en", ""))
+        print(f"{i}. {icon.get((x.get('rating') or 'none').lower(), '⬜')} "
+              f"{x.get('ru', '?')}")
+        print(f"   {x.get('journal', '?')}, {x.get('year', '')} · {x.get('en', '')[:150]}")
+        print(f"   {x.get('desc', '')}")
+        if x.get("why"):
+            print(f"   ▸ Зачем ему: {x['why']}")
+        print(f"   🔗 {link if link else 'ссылку в базах найти не удалось'}")
+        print()
+        time.sleep(0.35)                       # вежливо к Europe PMC
+
+    if rest:
+        print(f"\n## ОСТАЛЬНЫЕ {len(rest)} — по журналам\n")
+        by_j = {}
+        for x in rest:
+            by_j.setdefault(x.get("journal", "Прочее"), []).append(x)
+        for j, items in sorted(by_j.items(), key=lambda kv: -len(kv[1])):
+            print(f"### {j} ({len(items)})")
+            for x in items:
+                print(f"  {icon.get((x.get('rating') or 'none').lower(), '⬜')} "
+                      f"{x.get('ru', '?')}")
+                d = (x.get("desc") or "").strip()
+                if d and not d.startswith("в письме только заголовок"):
+                    print(f"     {d[:160]}")
+                link = _resolve_link(x.get("en", "")) if a.links_all else ""
+                if link:
+                    print(f"     🔗 {link}")
+                    time.sleep(0.35)
+            print()
+
+    print("=" * 62)
+    print("Ссылки резолвятся через Europe PMC по названию — если статья свежая "
+          "и ещё не проиндексирована, ссылки может не быть. Это НЕ повод "
+          "выдумывать URL.")
 
 
 def cmd_fulltext(a):
@@ -523,6 +632,9 @@ def main():
     s = sub.add_parser("search"); s.add_argument("query"); s.add_argument("--n", type=int, default=8)
     al = sub.add_parser("alerts", help="все статьи из научных писем за сутки")
     al.add_argument("--hours", type=int, default=24)
+    al.add_argument("--top", type=int, default=10, help="сколько статей разобрать подробно")
+    al.add_argument("--links-all", action="store_true",
+                    help="резолвить ссылки и для остальных статей (дольше)")
     ft = sub.add_parser("fulltext"); ft.add_argument("query", nargs="?", default="")
     ft.add_argument("--pmid"); ft.add_argument("--doi")
     ft.add_argument("--chars", type=int, default=20000)
