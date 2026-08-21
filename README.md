@@ -17,6 +17,7 @@
 | [addons/tg-gateway](addons/tg-gateway/) | **Единый шлюз к личному Telegram** (одно подключение — не убьёт сессию), чтение/дайджесты/отправка с подотчётностью | `telethon`, `fastapi` |
 | [addons/skills](addons/skills/) | 11 скиллов: почта (3 ящика), календарь iCloud, картинки с фильтром безопасности, документы с самопроверкой, наука, погода, TTS, файлы владельцу | по скиллу, см. SKILL.md |
 | [addons/skills/imggen](addons/skills/imggen/) | **Генерация картинок** (Grok Imagine 2.0 через fal.ai): текст→картинка и **фото→сторис** — подставить своё лицо в сцену, 9:16 для сторис, до 3 входных изображений | FAL_KEY |
+| [addons/skills/slack](addons/skills/slack/) | **Slack-дайджест**: что изменилось по проекту за сутки — по каналам, с тредами и упоминаниями. Только чтение | SLACK_TOKEN |
 | [addons/med-mcp](addons/med-mcp/) | **Мед-стек**: PubMed+ClinicalTrials (biomcp), этикетки FDA/побочки/RxNorm (ToolUniverse, укрощённый с 2604 до 16 инструментов), arXiv — готовые конфиги и грабли | pip-пакеты, см. README |
 | [addons/science-monitor](addons/science-monitor/) | Мониторинг журнальных алертов Gmail → разбор LLM → одно сообщение со ссылками PubMed и кнопками | Gmail app-password |
 | [addons/exchange-mgz](addons/exchange-mgz/) | Чтение/отправка Exchange-почты (EWS + NTLM) — для корпоративных ящиков | `exchangelib` |

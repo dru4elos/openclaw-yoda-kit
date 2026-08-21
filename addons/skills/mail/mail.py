@@ -13,6 +13,9 @@
 Подпись доктора добавляется автоматически (кроме --no-signature).
 """
 import argparse, email, imaplib, os, re, smtplib, ssl, sys, datetime
+import datetime as _dt
+import email.utils as _eu
+_re_uid = re.compile(r'UID (\d+)')
 from email.header import decode_header, make_header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -125,17 +128,39 @@ def imap_read(acc, a):
     M.login(user, pwd)
     M.select('INBOX', readonly=True)
     def fetch(uids, body=False, limit=800):
+        """body=False -> только заголовки ОДНИМ запросом (быстро, для списков).
+        body=True -> тело письма, по одному (медленно, только для --full)."""
+        if not uids:
+            return []
+        if not body:
+            uid_set = b','.join(u if isinstance(u, bytes) else str(u).encode() for u in uids)
+            typ, data = M.uid('fetch', uid_set,
+                              '(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])')
+            if typ != 'OK':
+                return []
+            out, order = [], [u.decode() if isinstance(u, bytes) else str(u) for u in uids]
+            for part in data:
+                if not isinstance(part, tuple) or len(part) < 2:
+                    continue
+                head = part[0].decode(errors='replace') if isinstance(part[0], bytes) else str(part[0])
+                mm = _re_uid.search(head)
+                m = email.message_from_bytes(part[1])
+                out.append({'uid': mm.group(1) if mm else '?',
+                            'from': dec(m.get('From')),
+                            'date': (m.get('Date') or '')[:22],
+                            'subj': dec(m.get('Subject'))})
+            pos = {u: i for i, u in enumerate(order)}
+            out.sort(key=lambda it: pos.get(it['uid'], 10**6))
+            return out
         out = []
         for uid in uids:
             typ, data = M.uid('fetch', uid, '(BODY.PEEK[])')
             if typ != 'OK' or not data or data[0] is None:
                 continue
             m = email.message_from_bytes(data[0][1])
-            it = {'uid': uid.decode(), 'from': dec(m.get('From')),
-                  'date': (m.get('Date') or '')[:22], 'subj': dec(m.get('Subject'))}
-            if body:
-                it['body'] = body_text(m, limit)
-            out.append(it)
+            out.append({'uid': uid.decode() if isinstance(uid, bytes) else str(uid),
+                        'from': dec(m.get('From')), 'date': (m.get('Date') or '')[:22],
+                        'subj': dec(m.get('Subject')), 'body': body_text(m, limit)})
         return out
     try:
         if a.full:
@@ -145,15 +170,34 @@ def imap_read(acc, a):
             uids = d[0].split()[-120:]
             hits = [it for it in fetch(uids) if a.search.lower() in (it['from'] + ' ' + it['subj']).lower()]
             prn(acc, hits[-12:], total=len(hits), label=f'поиск «{a.search}» в последних 120')
+        elif getattr(a, 'hours', None):
+            # SINCE фильтрует НА СЕРВЕРЕ (гранулярность — сутки), точную отсечку
+            # по часам делаем уже по заголовкам
+            since = (_dt.datetime.now() - _dt.timedelta(hours=a.hours + 24)).strftime('%d-%b-%Y')
+            _, d = M.uid('search', None, f'(SINCE {since})')
+            uids = d[0].split()[-200:]
+            items = fetch(uids[::-1])
+            cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=a.hours)
+            fresh = []
+            for it in items:
+                try:
+                    dtv = _eu.parsedate_to_datetime(it['date'])
+                    if dtv.tzinfo is None:
+                        dtv = dtv.replace(tzinfo=_dt.timezone.utc)
+                    if dtv >= cutoff:
+                        fresh.append(it)
+                except Exception:
+                    fresh.append(it)
+            prn(acc, fresh, total=len(fresh), label=f'за последние {a.hours} ч')
         elif a.recent:
             _, d = M.uid('search', None, 'ALL')
             uids = d[0].split()
-            prn(acc, fetch(uids[-a.recent:][::-1], body=True), total=len(uids), label=f'последние {a.recent}')
+            prn(acc, fetch(uids[-a.recent:][::-1]), total=len(uids), label=f'последние {a.recent}')
         else:
             n = a.unread or 5
             _, d = M.uid('search', None, 'UNSEEN')
             uids = d[0].split()
-            prn(acc, fetch(uids[-n:][::-1], body=True), total=len(uids), label=f'непрочитанные, свежие {n}')
+            prn(acc, fetch(uids[-n:][::-1]), total=len(uids), label=f'непрочитанные, свежие {n}')
     finally:
         try: M.logout()
         except Exception: pass
@@ -280,6 +324,7 @@ def main():
     r.add_argument('--account', choices=ALL_ACCOUNTS + ['all'], default='all')
     r.add_argument('--unread', type=int, nargs='?', const=5)
     r.add_argument('--recent', type=int, nargs='?', const=10)
+    r.add_argument('--hours', type=int, help='письма за последние N часов (быстро)')
     r.add_argument('--search')
     r.add_argument('--full')
     s = sub.add_parser('send')
@@ -303,8 +348,8 @@ def main():
                     import subprocess as _sp
                     if a.search:
                         _cmd = ["sudo", "-n", "/root/yoda_mgz.sh", "search", a.search]
-                    elif a.recent or a.full:
-                        _cmd = ["sudo", "-n", "/root/yoda_mgz.sh", "recent", str(a.recent or 5)]
+                    elif a.recent or a.full or getattr(a, 'hours', None):
+                        _cmd = ["sudo", "-n", "/root/yoda_mgz.sh", "recent", str(a.recent or (15 if getattr(a, "hours", None) else 5))]
                     else:
                         _cmd = ["sudo", "-n", "/root/yoda_mgz.sh", "unread", str(a.unread or 5)]
                     _r = _sp.run(_cmd, capture_output=True, text=True, timeout=300)
