@@ -13,7 +13,7 @@ import time, os, re, sys
 import requests
 
 CFG = os.path.expanduser("~/.openclaw/openclaw.json")
-OWNER = 123456789  # доктор Семёнов @drsav1994
+OWNER = 123456789  # доктор Семёнов @your_username
 
 def token():
     s = open(CFG, encoding="utf-8").read()
