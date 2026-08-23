@@ -13,7 +13,7 @@ import time, os, re, sys
 import requests
 
 CFG = os.path.expanduser("~/.openclaw/openclaw.json")
-OWNER = 123456789  # доктор Семёнов @your_username
+OWNER = 123456789  # <-- ваш Telegram ID (узнать: @userinfobot)
 
 def token():
     s = open(CFG, encoding="utf-8").read()
