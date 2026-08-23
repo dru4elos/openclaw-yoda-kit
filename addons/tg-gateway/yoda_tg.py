@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Telegram доктора для Йоды — ЧЕРЕЗ ЕДИНЫЙ ШЛЮЗ tg-gateway (127.0.0.1:8099).
+"""Telegram владелеца для Йоды — ЧЕРЕЗ ЕДИНЫЙ ШЛЮЗ tg-gateway (127.0.0.1:8099).
 
   yoda_tg.py dialogs [--n 25]
   yoda_tg.py read "<чат>" [--n 30]
@@ -114,7 +114,7 @@ def _sum_llm(text, folders):
     if not k:
         return "[нет ключа LLM — сырые заголовки]\n" + text[:3000]
     prompt = (
-        "Ниже — посты за последние сутки из Telegram-каналов доктора "
+        "Ниже — посты за последние сутки из Telegram-каналов владелеца "
         f"(папки: {folders}). Сделай ДАЙДЖЕСТ на русском для занятого человека:\n\n"
         "## Главное\n(3-5 пунктов — что действительно стоит внимания, с указанием канала)\n"
         "## Стартапы и продукт\n## DS / ML / ИИ\n## Мимо кассы\n(одной строкой, что было шумом)\n\n"
@@ -204,7 +204,7 @@ def _resolve_strict(chat):
 OWNER_ID = "123456789"
 
 def _bot_copy(target, text):
-    """Копия доктору голосом БОТА о каждой отправке с его личного аккаунта.
+    """Копия владелецу голосом БОТА о каждой отправке с его личного аккаунта.
     Неотключаемая подотчётность после инцидента 07.08 (автоответ Наталье Карловой)."""
     try:
         import json as _j, re as _re, urllib.request as _u
@@ -223,12 +223,12 @@ def _bot_copy(target, text):
 
 
 
-# Служебные отправители: их «неответ» доктора не волнует
+# Служебные отправители: их «неответ» владелеца не волнует
 _NOISE = ("telegram", "notifications", "spambot", "bot", "канал", "channel",
           "vip сигналы", "сигналы", "reminders", "яндекс", "ozon", "wildberries",
           "сбер", "тинькофф", "т-банк", "госуслуги", "delivery", "доставка",
-          # собственные сервисы доктора — они уведомляют, а не ждут ответа
-          "йода", "докмед", "свойврач", "доктор семенов", "симулейтив",
+          # собственные сервисы владелеца — они уведомляют, а не ждут ответа
+          "йода", "докмед", "свойврач", "владелец семенов", "симулейтив",
           "избранное", "saved messages")
 
 # Маркеры обещаний в СВОИХ сообщениях
@@ -243,110 +243,192 @@ def _noisy(name):
     return any(w in n for w in _NOISE)
 
 
-def cmd_pending(a):
-    """Где доктору написали и он не ответил + его собственные обещания.
+DISMISS_FILE = "/home/openclaw/.openclaw/workspace/memory/pending_dismissed.json"
 
-    Массовые группы (болталки, новостные) отсеиваются: «неответ» там ничего не
-    значит. Группа попадает в сводку ТОЛЬКО если в ней к доктору обратились —
-    упомянули @username, ответили на его сообщение или назвали по имени.
-    Скрипт даёт ФАКТЫ, выводы делает Йода."""
+
+def _load_dismissed():
+    """{chat_id: until_iso|"forever"} — что владелец попросил не напоминать."""
+    try:
+        import json
+        with open(DISMISS_FILE, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return {}
+    live = {}
+    now = datetime.now(timezone.utc)
+    for k, v in (data or {}).items():
+        if v == "forever":
+            live[str(k)] = v
+            continue
+        try:
+            if datetime.fromisoformat(v) > now:
+                live[str(k)] = v
+        except Exception:
+            pass
+    return live
+
+
+def cmd_dismiss(a):
+    """Снять напоминание по чату: навсегда или на N дней."""
+    import json
+    import os
+    d = {}
+    if os.path.exists(DISMISS_FILE):
+        try:
+            d = json.load(open(DISMISS_FILE, encoding="utf-8")) or {}
+        except Exception:
+            d = {}
+    target = str(a.chat)
+    if not target.lstrip("-").isdigit():                # дали имя — ищем id
+        for dl in gw("/dialogs", params={"limit": 200}).get("dialogs") or []:
+            if a.chat.lower() in (dl.get("name") or "").lower():
+                target = str(dl["id"])
+                break
+    if a.forever:
+        d[target] = "forever"
+        when = "навсегда"
+    else:
+        until = datetime.now(timezone.utc) + timedelta(days=a.days)
+        d[target] = until.isoformat()
+        when = f"на {a.days} дн. (до {until.strftime('%d.%m')})"
+    os.makedirs(os.path.dirname(DISMISS_FILE), exist_ok=True)
+    json.dump(d, open(DISMISS_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    print(f"OK: чат {a.chat} (id {target}) убран из напоминаний {when}.")
+    print("Вернуть: yoda_tg.py dismiss <чат> --days 0")
+
+
+def cmd_pending(a):
+    """Долги владелеца: кто ждёт ответа и что он сам обещал.
+
+    Висят, ПОКА НЕ ЗАКРЫТЫ: счётчик дней растёт, окно 30 дней. Снимается либо
+    ответом владелеца (тогда последним пишет он и чат уходит из списка), либо
+    явной командой dismiss."""
     me = gw("/me") or {}
     my_id, my_user = me.get("id"), (me.get("username") or "").lower()
+    dismissed = _load_dismissed()
     cutoff = datetime.now(timezone.utc) - timedelta(days=a.days)
     dialogs = gw("/dialogs", params={"limit": a.scan}).get("dialogs") or []
 
-    personal, group_hits, skipped_mass = [], [], 0
-    for d in dialogs:
-        name = d.get("name") or ""
-        if d.get("is_channel") and not d.get("is_group"):
-            continue                                   # каналы-ленты
-        if _noisy(name) or d.get("is_bot") or d.get("is_self"):
-            continue                                   # боты и Избранное ответа не ждут
+    def _days(iso):
         try:
-            when = datetime.fromisoformat(d["date"]) if d.get("date") else None
+            return (datetime.now(timezone.utc) - datetime.fromisoformat(iso)).total_seconds() / 86400
+        except Exception:
+            return 0.0
+
+    def _ago(iso):
+        d = _days(iso)
+        if d < 1:
+            return f"{int(d * 24)} ч"
+        return f"{int(d)} дн"
+
+    personal, group_hits, promises, skipped_mass, hidden = [], [], [], 0, 0
+    for dl in dialogs:
+        name = dl.get("name") or ""
+        if dl.get("is_channel") and not dl.get("is_group"):
+            continue
+        if _noisy(name) or dl.get("is_bot") or dl.get("is_self"):
+            continue
+        if str(dl.get("id")) in dismissed:
+            hidden += 1
+            continue
+        try:
+            when = datetime.fromisoformat(dl["date"]) if dl.get("date") else None
         except Exception:
             when = None
         if when and when < cutoff:
             continue
 
-        if d.get("is_group"):
-            # массовые болталки не трогаем, если там нет обращения к доктору
-            if (d.get("unread") or 0) > a.mass:
+        if dl.get("is_group"):
+            if (dl.get("unread") or 0) > a.mass:
                 skipped_mass += 1
                 continue
-            msgs = gw("/read", params={"chat": str(d["id"]), "limit": a.ctx * 3}).get("messages") or []
-            hit = None
+            msgs = gw("/read", params={"chat": str(dl["id"]), "limit": a.ctx * 3}).get("messages") or []
             for m in msgs:
                 if m.get("out"):
                     continue
-                txt = (m.get("text") or "").lower()
-                mentioned = (my_user and ("@" + my_user) in txt)
-                replied = str(m.get("reply_to_user_id") or "") == str(my_id)
-                if mentioned or replied or "андрей анатол" in txt or "@доктор" in txt:
-                    hit = m
+                t = (m.get("text") or "").lower()
+                if (my_user and ("@" + my_user) in t) or \
+                   str(m.get("reply_to_user_id") or "") == str(my_id) or \
+                   "имя владельца" in t:
+                    group_hits.append((dl, msgs, m))
                     break
-            if hit:
-                group_hits.append((d, msgs, hit))
             continue
 
-        if d.get("out") is False:                      # личка: последним писали ему
-            personal.append(d)
+        if dl.get("out") is False:
+            personal.append(dl)
+        else:
+            # Последним писал владелец — но если он что-то ОБЕЩАЛ и ответа нет,
+            # долг всё равно за ним. Раньше такие случаи терялись.
+            msgs = gw("/read", params={"chat": str(dl["id"]), "limit": 4}).get("messages") or []
+            for m in msgs:
+                if not m.get("out"):
+                    break                              # собеседник уже отреагировал
+                t = (m.get("text") or "")
+                if any(p in t.lower() for p in _PROMISE):
+                    promises.append((dl, msgs, m))
+                    break
 
-    personal.sort(key=lambda x: x.get("date") or "", reverse=True)
-    print(f"НЕОТВЕЧЕННОЕ И ОБЕЩАННОЕ — окно {a.days} дн., просмотрено диалогов: {len(dialogs)}")
-    print("=" * 60)
+    personal.sort(key=lambda x: x.get("date") or "")     # самые старые сверху
+    promises.sort(key=lambda x: x[0].get("date") or "")
 
-    def _ago(iso):
-        try:
-            h = (datetime.now(timezone.utc) - datetime.fromisoformat(iso)).total_seconds() / 3600
-            return f"{int(h)} ч назад" if h < 48 else f"{int(h // 24)} дн назад"
-        except Exception:
-            return ""
+    print(f"НЕОТВЕЧЕННОЕ И ОБЕЩАННОЕ — окно {a.days} дн., диалогов просмотрено: {len(dialogs)}")
+    print("Долг висит, пока владелец не ответит или не скажет «убери из напоминаний».")
+    print("=" * 62)
 
-    def _dump(msgs, chat_name):
-        for m in msgs[::-1]:
-            who = "ДОКТОР" if m.get("out") else (m.get("sender") or chat_name)[:22]
+    def _dump(msgs, chat_name, limit=None):
+        for m in (msgs[:limit] if limit else msgs)[::-1]:
+            who = "ВЛАДЕЛЕЦ" if m.get("out") else (m.get("sender") or chat_name)[:22]
             txt = (m.get("text") or m.get("caption") or "[медиа]").replace("\n", " ")[:230]
-            mark = ""
-            if m.get("out") and any(p in txt.lower() for p in _PROMISE):
-                mark = "  ⚑ОБЕЩАНИЕ"
+            mark = "  ⚑ОБЕЩАНИЕ" if (m.get("out") and any(p in txt.lower() for p in _PROMISE)) else ""
             print(f"    {_when(m.get('date'))} {who}: {txt}{mark}")
 
     if personal:
-        print(f"\n## ЛИЧНЫЕ — ЖДУТ ОТВЕТА ({len(personal)})\n")
-        for d in personal[: a.max]:
-            unread = f", непрочитано {d['unread']}" if d.get("unread") else ""
-            print(f"### {d['name']} — {_ago(d.get('date'))}{unread}")
-            msgs = gw("/read", params={"chat": str(d["id"]), "limit": a.ctx}).get("messages") or []
-            _dump(msgs, d["name"])
+        print(f"\n## ЖДУТ ОТВЕТА ({len(personal)}) — от самых давних\n")
+        for dl in personal[: a.max]:
+            unread = f", непрочитано {dl['unread']}" if dl.get("unread") else ""
+            d = _days(dl.get("date"))
+            flag = "  🔥 ВИСИТ ДАВНО" if d >= 3 else ""
+            print(f"### {dl['name']} — ждёт {_ago(dl.get('date'))}{unread}{flag}")
+            _dump(gw("/read", params={"chat": str(dl["id"]), "limit": a.ctx}).get("messages") or [],
+                  dl["name"])
+            print()
+
+    if promises:
+        print(f"\n## ОБЕЩАЛ, НО НЕ ВИДНО ПРОДОЛЖЕНИЯ ({len(promises)})")
+        print("(последним писал сам владелец, обещание не закрыто)\n")
+        for dl, msgs, m in promises[: a.max]:
+            print(f"### {dl['name']} — обещано {_ago(m.get('date') or dl.get('date'))} назад")
+            _dump(msgs, dl["name"], limit=a.ctx)
             print()
 
     if group_hits:
-        print(f"\n## В ГРУППАХ ОБРАТИЛИСЬ К ДОКТОРУ ({len(group_hits)})\n")
-        for d, msgs, hit in group_hits[: a.max]:
-            print(f"### {d['name']} — обращение {_ago(hit.get('date'))}")
-            print(f"    ОБРАЩЕНИЕ: {(hit.get('sender') or '?')}: "
-                  f"{(hit.get('text') or '')[:230]}")
-            _dump(msgs[: a.ctx], d["name"])
+        print(f"\n## В ГРУППАХ ОБРАТИЛИСЬ К ВЛАДЕЛЕЦУ ({len(group_hits)})\n")
+        for dl, msgs, hit in group_hits[: a.max]:
+            print(f"### {dl['name']} — обращение {_ago(hit.get('date'))} назад")
+            print(f"    ОБРАЩЕНИЕ: {(hit.get('sender') or '?')}: {(hit.get('text') or '')[:230]}")
+            _dump(msgs[: a.ctx], dl["name"])
             print()
 
-    if not personal and not group_hits:
-        print("\nЧисто: в личке везде последнее слово за доктором, "
-              "в группах к нему не обращались.")
+    if not (personal or promises or group_hits):
+        print("\nЧисто: долгов нет — везде ответил, обещания закрыты.")
+    if hidden:
+        print(f"(скрыто по просьбе владелеца: {hidden} чат(ов))")
     if skipped_mass:
         print(f"(пропущено массовых чатов-болталок: {skipped_mass})")
 
-    print("\n" + "=" * 60)
-    print("Как читать: ⚑ОБЕЩАНИЕ — это слова САМОГО доктора, похожие на обязательство. "
-          "Проверь по переписке, закрыл он его или нет, и напомни только про реально "
-          "незакрытое. Обязательств, которых нет в тексте, не выдумывай. "
-          "Отвечать за доктора нельзя — только показать ему список.")
+    print("\n" + "=" * 62)
+    print("Как подавать владелецу: каждый пункт — КТО, СКОЛЬКО ЖДЁТ, ЧЕГО хотят. "
+          "Висящее 3+ дня выделяй. ⚑ОБЕЩАНИЕ — слова самого владелеца: проверь по "
+          "переписке, закрыто ли, и напоминай только про незакрытое. "
+          "Если владелец говорит «убери это», «уже ответил», «не напоминай» — выполни: "
+          "sudo /root/yoda_tg.sh dismiss \"<чат>\" --forever   (или --days N). "
+          "Отвечать за владелеца нельзя.")
 
 
 def cmd_send(a):
-    """Отправка от имени доктора. Требует --confirm yes."""
+    """Отправка от имени владелеца. Требует --confirm yes."""
     if a.confirm != "yes":
-        sys.exit("ОТКАЗ: отправка требует --confirm yes. Сначала покажи доктору получателя и "
+        sys.exit("ОТКАЗ: отправка требует --confirm yes. Сначала покажи владелецу получателя и "
                  "полный текст, получи явное согласие.")
     target = _resolve_strict(a.chat)
     gw("/send", method="POST", json={"chat": target, "text": a.text})
@@ -357,7 +439,7 @@ def cmd_send(a):
 
 
 def cmd_sendfile(a):
-    """Отправка файла от имени доктора. Требует --confirm yes."""
+    """Отправка файла от имени владелеца. Требует --confirm yes."""
     if a.confirm != "yes":
         sys.exit("ОТКАЗ: отправка требует --confirm yes.")
     if not os.path.exists(a.path):
@@ -381,12 +463,17 @@ def main():
     dg = sub.add_parser("digest"); dg.add_argument("--folder", action="append")
     dg.add_argument("--hours", type=int, default=24)
     pn = sub.add_parser("pending", help="неотвеченное и обещанное")
-    pn.add_argument("--days", type=int, default=7, help="окно активности чатов")
+    pn.add_argument("--days", type=int, default=30, help="окно активности чатов")
     pn.add_argument("--scan", type=int, default=120, help="сколько диалогов просмотреть")
     pn.add_argument("--max", type=int, default=12, help="сколько чатов раскрыть подробно")
     pn.add_argument("--ctx", type=int, default=8, help="сообщений контекста на чат")
     pn.add_argument("--mass", type=int, default=300,
                     help="группы с непрочитанным выше этого — считать болталкой")
+
+    ds = sub.add_parser("dismiss", help="убрать чат из напоминаний")
+    ds.add_argument("chat")
+    ds.add_argument("--days", type=int, default=7)
+    ds.add_argument("--forever", action="store_true")
 
     sn = sub.add_parser("send"); sn.add_argument("chat"); sn.add_argument("text")
     sn.add_argument("--confirm", default="no")
@@ -395,7 +482,7 @@ def main():
     a = ap.parse_args()
 
     {"dialogs": cmd_dialogs, "read": cmd_read, "search": cmd_search, "media": cmd_media,
-     "digest": cmd_digest, "pending": cmd_pending,
+     "digest": cmd_digest, "pending": cmd_pending, "dismiss": cmd_dismiss,
      "send": cmd_send, "sendfile": cmd_sendfile}[a.cmd](a)
 
 
