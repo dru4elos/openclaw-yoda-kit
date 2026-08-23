@@ -45,6 +45,16 @@
         "api": "openai-completions",
         "models": [
           {
+            "id": "deepseek-v4-flash-vision-exp",
+            "name": "DeepSeek V4 Flash Vision",
+            "input": [
+              "text",
+              "image"
+            ],
+            "maxTokens": 64000,
+            "contextWindow": 240000
+          },
+          {
             "id": "deepseek-v4-pro",
             "name": "DeepSeek V4 Pro",
             "input": [
@@ -71,8 +81,9 @@
       "model": {
         "primary": "excash/gpt-5.6-sol",
         "fallbacks": [
+          "excash/gemini-3.7-flash-tiered",
+          "dseek/deepseek-v4-flash-vision-exp",
           "excash/gemini-3.6-flash",
-          "excash/gemini-3.1-pro",
           "dseek/deepseek-v4-pro"
         ]
       },

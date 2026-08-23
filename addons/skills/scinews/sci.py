@@ -32,7 +32,7 @@ if os.path.exists(_p):
             k, v = line.split("=", 1)
             ENV[k.strip()] = v.strip().strip('"').strip("'")
 
-UNPAYWALL_EMAIL = ENV.get("UNPAYWALL_EMAIL", "you@example.com")
+UNPAYWALL_EMAIL = ENV.get("UNPAYWALL_EMAIL", "dru4elos@gmail.com")
 
 # ---------- LLM: excash gemini-3.1-pro -> резерв DeepSeek V4 Pro ----------
 def _llm_once(base_url, key, model, messages, max_tokens, temperature, timeout=600):
@@ -54,8 +54,8 @@ def llm(messages, max_tokens=20000, temperature=0.35):
             sys.stderr.write(f"excash недоступен -> DeepSeek V4 Pro: {e}\n")
     dk = ENV.get("DEEPSEEK_API_KEY")
     if dk:
-        # deepseek-v4-pro — reasoning-модель: щедрый лимит, чтобы content заполнился после рассуждений
-        return _llm_once("https://api.deepseek.com/v1", dk, "deepseek-v4-pro",
+        # резерв: deepseek-v4-flash-vision-exp — быстрый (1с) и мультимодальный
+        return _llm_once("https://api.deepseek.com/v1", dk, "deepseek-v4-flash-vision-exp",
                          messages, min(max(max_tokens, 8000), 32000), temperature, timeout=900)
     sys.exit("нет ни EXCASH, ни DEEPSEEK ключей в ~/.openclaw/.env")
 
