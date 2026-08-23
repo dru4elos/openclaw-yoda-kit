@@ -79,10 +79,10 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "excash/gpt-5.6-sol",
+        "primary": "dseek/deepseek-v4-flash-vision-exp",
         "fallbacks": [
+          "excash/gpt-5.6-sol",
           "excash/gemini-3.7-flash-tiered",
-          "dseek/deepseek-v4-flash-vision-exp",
           "excash/gemini-3.6-flash",
           "dseek/deepseek-v4-pro"
         ]
@@ -137,8 +137,8 @@
         "maxBytes": 26214400,
         "models": [
           {
-            "provider": "excash",
-            "model": "gemini-3.6-flash"
+            "provider": "dseek",
+            "model": "deepseek-v4-flash-vision-exp"
           }
         ]
       },

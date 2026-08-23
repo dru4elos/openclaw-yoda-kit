@@ -9,9 +9,12 @@ HTML-страницей от прокси, не от модели). Просто
 на меню и документах, а это главный сценарий. Поэтому: если целиком не влезает —
 режем на перекрывающиеся плитки, читаем каждую в хорошем разрешении и сводим."""
 import base64
+import urllib.request
+import json
 import io
 import os
 import sys
+import time
 
 import requests
 
@@ -60,6 +63,34 @@ TILE_PROMPT = """Это ФРАГМЕНТ {n} из {total} одного изоб�
 Главное — ВЕСЬ текст дословно (с переводом, если не по-русски), цены и цифры не пропускай.
 Затем кратко — что изображено. Не додумывай то, чего не видно, и не пытайся описать
 изображение целиком. Плохо читается — так и скажи."""
+
+
+
+DS_KEY = ENV.get("DEEPSEEK_API_KEY", "")
+DS_MODEL = "deepseek-v4-flash-vision-exp"
+DS_BUDGET = 900 * 1024        # DeepSeek спокойно берёт 254КБ, ставим запас
+
+
+def _ask_deepseek(data, mime, prompt):
+    """Картинка ЦЕЛИКОМ одним запросом. У DeepSeek лимит на изображение в разы
+    выше, чем у шлюза excash (~40КБ), поэтому резать на плитки не нужно."""
+    if not DS_KEY:
+        return ""
+    body = json.dumps({
+        "model": DS_MODEL, "max_tokens": 8000, "temperature": 0.2,
+        "messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {
+                "url": f"data:image/{mime};base64," + base64.b64encode(data).decode()}},
+            {"type": "text", "text": prompt}]}]}).encode()
+    req = urllib.request.Request(
+        "https://api.deepseek.com/chat/completions", data=body,
+        headers={"Authorization": "Bearer " + DS_KEY, "Content-Type": "application/json"})
+    resp = json.loads(urllib.request.urlopen(req, timeout=180).read().decode())
+    msg = ((resp.get("choices") or [{}])[0] or {}).get("message") or {}
+    c = msg.get("content")
+    if isinstance(c, list):
+        c = "\n".join(x.get("text", "") for x in c if isinstance(x, dict))
+    return (c or "").strip()
 
 
 def _encode(im, max_px, quality):
@@ -152,7 +183,37 @@ def main():
     im = Image.open(img)
     dbg("=== %s %s ===" % (os.path.basename(img), im.size))
 
-    # 1) пробуем целиком в максимальном качестве, влезающем в бюджет
+    # 0) DeepSeek: картинка целиком, максимальное качество — основной путь
+    if DS_KEY:
+        try:
+            data, size, q = _fit(im, budget=DS_BUDGET)
+            if data:
+                dbg("deepseek целиком %s q%s -> %d КБ" % (size, q, len(data) // 1024))
+                txt = ""
+                for attempt in range(3):
+                    try:
+                        txt = _ask_deepseek(data, "jpeg", PROMPT)
+                    except Exception as e:
+                        code = getattr(getattr(e, "response", None), "status_code", None)
+                        dbg("deepseek попытка %d: %s%s" % (
+                            attempt + 1, type(e).__name__, " HTTP %s" % code if code else ""))
+                        # 4xx — проблема запроса, повтор не поможет; сеть — поможет
+                        if code and 400 <= code < 500:
+                            break
+                        time.sleep(2 + attempt * 3)
+                        continue
+                    if txt:
+                        break
+                    dbg("deepseek попытка %d: пустой ответ" % (attempt + 1))
+                if txt:
+                    dbg("OK deepseek: %d симв" % len(txt))
+                    print(txt)
+                    return
+                dbg("deepseek не ответил — иду на excash")
+        except Exception as e:
+            dbg("deepseek путь упал: %s" % type(e).__name__)
+
+    # 1) резерв excash: лестница качества под его лимит ~40КБ
     data, size, q = _fit(im)
     if data:
         dbg("целиком %s q%s -> %d КБ" % (size, q, len(data) // 1024))
