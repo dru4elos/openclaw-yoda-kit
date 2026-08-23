@@ -79,7 +79,7 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "dseek/deepseek-v4-flash-vision-exp",
+        "primary": "excash/gpt-5.6-sol",
         "fallbacks": [
           "excash/gpt-5.6-sol",
           "excash/gemini-3.7-flash-tiered",
@@ -99,7 +99,12 @@
         },
         "midTurnPrecheck": {
           "enabled": true
-        }
+        },
+        "truncateAfterCompaction": true,
+        "maxActiveTranscriptBytes": "1mb",
+        "maxHistoryShare": 0.35,
+        "keepRecentTokens": 24000,
+        "__comment": "maxActiveTranscriptBytes РАБОТАЕТ только вместе с truncateAfterCompaction. Без автоочистки транскрипт растёт до мегабайт и ответы начинают тормозить."
       },
       "subagents": {
         "maxConcurrent": 8,
