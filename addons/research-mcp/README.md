@@ -15,12 +15,17 @@
 
 ## Установка
 ```bash
-pip install ddgs trafilatura pypdf "mcp[cli]" httpx
+pip install ddgs trafilatura pypdf "mcp[cli]<2" httpx
 cp research_mcp.py ~/.openclaw/
 openclaw mcp add research --command $(which python3) --arg ~/.openclaw/research_mcp.py \
   --env RUST_LOG=error --env PYTHONWARNINGS=ignore
 openclaw mcp probe research   # должно показать 6 tools
 ```
+
+## ⚠️ Версия mcp
+Ставьте **`"mcp[cli]<2"`**. В mcp 2.x `FastMCP` переименован в `MCPServer`, и код
+падает с `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`. Свежая
+установка по умолчанию тянет 2.x — пин обязателен.
 
 ## Важно
 - Логи ddgs идут в stderr — stdout чист, stdio-протокол MCP не ломается.
