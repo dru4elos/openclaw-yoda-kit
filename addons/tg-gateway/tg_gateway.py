@@ -15,7 +15,7 @@ API (только localhost:8099):
   POST /story     {files:[...]}               — сторис в свой профиль
 
 Транспорт наружу: WARP (прямой к DC заблокирован РКН).
-Сессия: /home/knee_bot/publish_session.session (создана 31.07 через Мак).
+Сессия: <путь>/publish_session.session (создаётся один раз с личной машины).
 """
 import asyncio
 import os
@@ -183,10 +183,35 @@ async def read(chat: str, limit: int = 50, media: int = 0):
 
 
 @app.get("/dialogs")
-async def dialogs(limit: int = 100):
+async def dialogs(limit: int = 100, kinds: str = "all", days: int = 0,
+                  max_scan: int = 1500):
+    """kinds=user — только личные переписки (без каналов, групп, ботов, Избранного).
+
+    Фильтр применяется ДО лимита. Без этого лимит съедали каналы: при limit=120
+    на 75 каналов и 31 группу приходилось 5 личных чатов, и половина долгов
+    доктора просто не попадала в выборку — каждый день разная (инцидент 30.08).
+
+    days>0 — не углубляться дальше N дней. Закреплённые чаты идут первыми
+    независимо от даты, поэтому останавливаемся не на первом старом, а после
+    STALE_STOP подряд идущих старых.
+    """
+    from datetime import datetime, timedelta, timezone
     cl = await client()
     out = []
-    async for d in cl.iter_dialogs(limit=min(int(limit), 500)):
+    only_user = (kinds or "all").lower() == "user"
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=int(days))) if days else None
+    STALE_STOP, stale, scanned = 30, 0, 0
+    async for d in cl.iter_dialogs(limit=None if (only_user or cutoff) else min(int(limit), 500)):
+        scanned += 1
+        if scanned > int(max_scan):
+            break
+        if cutoff:
+            if d.date and d.date < cutoff:
+                stale += 1
+                if stale >= STALE_STOP:
+                    break
+                continue
+            stale = 0
         _m = getattr(d, "message", None)
         # out=True -> последним писал доктор; False -> ждут его ответа
         _out = bool(getattr(_m, "out", False)) if _m else None
@@ -201,6 +226,9 @@ async def dialogs(limit: int = 100):
         _ent = getattr(d, "entity", None)
         _is_bot = bool(getattr(_ent, "bot", False)) if _ent is not None else False
         _is_self = bool(getattr(_ent, "is_self", False)) if _ent is not None else False
+        if only_user and (d.is_channel or bool(getattr(d, "is_group", False))
+                          or _is_bot or _is_self):
+            continue
         out.append({"id": d.id, "name": d.name, "is_channel": d.is_channel,
                     "is_group": bool(getattr(d, "is_group", False)),
                     "is_bot": _is_bot, "is_self": _is_self,
@@ -208,7 +236,9 @@ async def dialogs(limit: int = 100):
                     "date": d.date.isoformat() if d.date else None,
                     "out": _out, "sender": _sender,
                     "last": ((_m.message or "") if _m else "")[:300]})
-    return {"ok": True, "count": len(out), "dialogs": out}
+        if len(out) >= int(limit):
+            break
+    return {"ok": True, "count": len(out), "scanned": scanned, "dialogs": out}
 
 
 @app.post("/send")
