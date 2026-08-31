@@ -202,7 +202,7 @@ def _resolve_strict(chat):
 
 
 OWNER_ID = "123456789"   # свой telegram id
-_OWNER_NAME = "имя владельца"  # как к нему обращаются в группах, строчными   # свой telegram id
+_OWNER_NAME = "имя владельца"  # как к нему обращаются в группах, строчными
 
 def _bot_copy(target, text):
     """Копия доктору голосом БОТА о каждой отправке с его личного аккаунта.
@@ -249,25 +249,40 @@ STATE_FILE = "/home/openclaw/.openclaw/workspace/memory/pending_state.json"
 
 
 def _load_dismissed():
-    """{chat_id: until_iso|"forever"} — что доктор попросил не напоминать."""
+    """{chat_id: запись} — что доктор просил не напоминать.
+
+    Режимы: "until_new" — замять текущий долг, но вернуть, если человек напишет
+    НОВОЕ (он ведь спросит уже о другом); "until:<iso>" — отложить до даты;
+    "forever" — не показывать вовсе. Старый формат (строка) читается как раньше.
+    """
     try:
         import json
         with open(DISMISS_FILE, encoding="utf-8") as fh:
             data = json.load(fh)
     except Exception:
         return {}
-    live = {}
-    now = datetime.now(timezone.utc)
+    live, now = {}, datetime.now(timezone.utc)
     for k, v in (data or {}).items():
-        if v == "forever":
-            live[str(k)] = v
-            continue
-        try:
-            if datetime.fromisoformat(v) > now:
-                live[str(k)] = v
-        except Exception:
-            pass
+        rec = v if isinstance(v, dict) else (
+            {"mode": "forever"} if v == "forever" else {"mode": "until", "until": v})
+        if rec.get("mode") == "until":
+            try:
+                if datetime.fromisoformat(rec.get("until") or "") <= now:
+                    continue                      # срок вышел — долг снова виден
+            except Exception:
+                continue
+        live[str(k)] = rec
     return live
+
+
+def _is_hidden(dl, dismissed):
+    """Скрыт ли чат сейчас. until_new снимается сам, как только пришло новое."""
+    rec = dismissed.get(str(dl.get("id")))
+    if not rec:
+        return False
+    if rec.get("mode") == "until_new":
+        return (dl.get("date") or "") <= (rec.get("sig") or "")
+    return True
 
 
 def cmd_dismiss(a):
@@ -280,14 +295,13 @@ def cmd_dismiss(a):
             d = json.load(open(DISMISS_FILE, encoding="utf-8")) or {}
         except Exception:
             d = {}
-    target = str(a.chat)
+    target, found = str(a.chat), None
     if not target.lstrip("-").isdigit():                # дали имя — ищем id
         # Личные чаты берём отфильтрованными: в общем списке лимит съедали каналы,
         # имя не находилось, и в файл писалось само имя — dismiss молча не срабатывал,
         # доктор просил «убери», а чат возвращался в бриф на следующее утро.
         pools = [{"kinds": "user", "days": 365, "limit": 500}, {"limit": 400}]
         low = a.chat.strip().lower()
-        found = None
         for params in pools:
             dls = gw("/dialogs", params=params).get("dialogs") or []
             exact = [d for d in dls if (d.get("name") or "").strip().lower() == low]
@@ -303,18 +317,55 @@ def cmd_dismiss(a):
             sys.exit(f"чат «{a.chat}» не найден — уточни @username или id. "
                      "Ничего не записал: молча скрыть не тот чат опаснее.")
         target = str(found["id"])
+    name = (found or {}).get("name") if not str(a.chat).lstrip("-").isdigit() else a.chat
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if a.days == 0 and not a.forever:
+        d.pop(target, None)
+        json.dump(d, open(DISMISS_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        print(f"OK: чат {a.chat} снова в напоминаниях.")
+        return
     if a.forever:
-        d[target] = "forever"
-        when = "навсегда"
+        d[target] = {"mode": "forever", "name": name, "at": now_iso}
+        when = "навсегда (даже если напишет ещё)"
+    elif a.days is None:
+        # по умолчанию — «замять этот долг»: новое сообщение вернёт чат в список
+        sig = (found or {}).get("date") or ""
+        d[target] = {"mode": "until_new", "name": name, "at": now_iso, "sig": sig}
+        when = "до следующего его сообщения"
     else:
         until = datetime.now(timezone.utc) + timedelta(days=a.days)
-        d[target] = until.isoformat()
+        d[target] = {"mode": "until", "name": name, "at": now_iso,
+                     "until": until.isoformat()}
         when = f"на {a.days} дн. (до {until.strftime('%d.%m')})"
     os.makedirs(os.path.dirname(DISMISS_FILE), exist_ok=True)
     json.dump(d, open(DISMISS_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print(f"OK: чат {a.chat} (id {target}) убран из напоминаний {when}.")
-    print("Вернуть: yoda_tg.py dismiss <чат> --days 0")
+    print("Вернуть: yoda_tg.py dismiss <чат> --days 0 | посмотреть замятое: yoda_tg.py dismissed")
 
+
+
+def cmd_dismissed(a):
+    """Показать, что доктор просил не напоминать, и как это снять."""
+    d = _load_dismissed()
+    if not d:
+        print("Ничего не замято — в напоминаниях всё.")
+        return
+    print(f"ЗАМЯТО ({len(d)}):\n")
+    names = {}
+    if any(not (r.get("name") or "") for r in d.values()):
+        for dl in (gw("/dialogs", params={"kinds": "user", "days": 365,
+                                          "limit": 500}).get("dialogs") or []):
+            names[str(dl["id"])] = dl.get("name")
+    for k, rec in d.items():
+        nm = rec.get("name") or names.get(k) or k
+        mode = rec.get("mode")
+        if mode == "forever":
+            how = "навсегда"
+        elif mode == "until_new":
+            how = "пока не напишет что-то новое"
+        else:
+            how = "до " + _when(rec.get("until"), "%d.%m")
+        print(f"  • {nm} — {how}   (снять: dismiss \"{nm}\" --days 0)")
 
 
 def _llm_env(name):
@@ -525,7 +576,7 @@ def cmd_pending(a):
     for dl in personal_raw:
         if _noisy(dl.get("name") or ""):
             continue
-        if str(dl.get("id")) in dismissed:
+        if _is_hidden(dl, dismissed):
             hidden += 1
             continue
         if dl.get("out") is False:
@@ -545,7 +596,7 @@ def cmd_pending(a):
     for dl in (gw("/dialogs", params={"limit": a.gscan}).get("dialogs") or []):
         if not dl.get("is_group") or _noisy(dl.get("name") or ""):
             continue
-        if str(dl.get("id")) in dismissed:
+        if _is_hidden(dl, dismissed):
             hidden += 1
             continue
         try:
@@ -667,9 +718,10 @@ def cmd_pending(a):
           "Висящее 3+ дня выделяй. Строку ЕЩЁ ЖДУТ не выбрасывай — это тоже "
           "незакрытые долги, дай их перечнем. ⚑ОБЕЩАНИЕ — слова самого доктора: "
           "проверь по переписке, закрыто ли, и напоминай только про незакрытое. "
-          "Если доктор говорит «убери это», «уже ответил», «не напоминай» — выполни: "
-          "sudo /root/yoda_tg.sh dismiss \"<чат>\" --forever   (или --days N). "
-          "Отвечать за доктора нельзя.")
+          "Доктор решает, что оставить: «забей» -> dismiss \"<чат>\" (вернётся, если "
+          "человек напишет новое); «напомни через неделю» -> --days 7; «убери совсем» "
+          "-> --forever; «верни» -> --days 0; «что я замял» -> dismissed. "
+          "Всё через sudo /root/yoda_tg.sh. Сам ничего не замалчивай и за доктора не отвечай.")
 
 
 def cmd_send(a):
@@ -724,9 +776,12 @@ def main():
 
     ds = sub.add_parser("dismiss", help="убрать чат из напоминаний")
     ds.add_argument("chat")
-    ds.add_argument("--days", type=int, default=7)
+    ds.add_argument("--days", type=int, default=None,
+                    help="отложить на N дней (0 — вернуть в список). "
+                         "Без флага — замять до следующего сообщения от человека")
     ds.add_argument("--forever", action="store_true")
 
+    sub.add_parser("dismissed", help="что сейчас замято и как вернуть")
     sn = sub.add_parser("send"); sn.add_argument("chat"); sn.add_argument("text")
     sn.add_argument("--confirm", default="no")
     sf = sub.add_parser("sendfile"); sf.add_argument("chat"); sf.add_argument("path")
@@ -735,6 +790,7 @@ def main():
 
     {"dialogs": cmd_dialogs, "read": cmd_read, "search": cmd_search, "media": cmd_media,
      "digest": cmd_digest, "pending": cmd_pending, "dismiss": cmd_dismiss,
+     "dismissed": cmd_dismissed,
      "send": cmd_send, "sendfile": cmd_sendfile}[a.cmd](a)
 
 
