@@ -11,7 +11,7 @@
 
 ```
 python3 ~/.openclaw/workspace/skills/deck/deck.py new доклад.md \
-        --title "..." --author "Семенов А. В., к.м.н." --affil "..." --date "2026"
+        --title "..." --author "Фамилия И. О., к.м.н." --affil "..." --date "2026"
 python3 .../deck.py layouts                 # шпаргалка по макетам
 python3 .../deck.py check доклад.md --vision  # ОБЯЗАТЕЛЬНО перед выдачей
 python3 .../deck.py render доклад.md --to pdf   # pdf | pptx | png | html
