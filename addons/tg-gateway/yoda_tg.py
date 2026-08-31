@@ -17,6 +17,8 @@
 """
 import argparse
 import os
+import re
+import shlex
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -724,6 +726,439 @@ def cmd_pending(a):
           "Всё через sudo /root/yoda_tg.sh. Сам ничего не замалчивай и за доктора не отвечай.")
 
 
+# ─────────────────── обещания самому себе → напоминание ────────────────
+MSK = timezone(timedelta(hours=3))
+PROMISE_STATE = "/home/openclaw/.openclaw/workspace/memory/promise_state.json"
+OWNER_SESSION = "agent:main:telegram:default:direct:" + OWNER_ID
+
+# Широкий фильтр-сито: дешевле пропустить лишнее в модель, чем потерять обещание
+_SELF_HINT = (
+    "напомин", "поставлю", "завтра", "послезавтра", "в понедельник", "во вторник",
+    "в среду", "в четверг", "в пятницу", "на неделе", "на работе", "с работы",
+    "из кабинета", "с компа", "выпишу", "оформлю", "распечатаю", "подпишу",
+    "занесу", "пришлю", "скину", "отправлю", "сделаю", "посмотрю", "гляну",
+    "проверю", "уточню", "разберусь", "займусь", "подготовлю", "перезвоню",
+    "позвоню", "напишу", "договорюсь", "вечером", "утром", "как освобожусь",
+    "не на работе", "не за компом", "буду на месте",
+)
+
+
+def _promise_state():
+    try:
+        import json
+        with open(PROMISE_STATE, encoding="utf-8") as fh:
+            return json.load(fh) or {}
+    except Exception:
+        return {}
+
+
+def _promise_save(st):
+    import json, os
+    try:
+        os.makedirs(os.path.dirname(PROMISE_STATE), exist_ok=True)
+        tmp = PROMISE_STATE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(st, fh, ensure_ascii=False, indent=1)
+        os.replace(tmp, PROMISE_STATE)
+    except Exception:
+        pass
+
+
+def _work_morning(after_iso, hour=8, minute=30):
+    """Ближайшее рабочее утро ПОСЛЕ момента обещания и обязательно в будущем.
+
+    Доктор может сделать это только с рабочего компьютера (будни 9-15), поэтому
+    напоминание ставим на 8:30 — до начала окна, а выходные пропускаем.
+    Обещание могло висеть несколько дней: тогда точка отсчёта — сейчас, иначе
+    напоминание встало бы на уже прошедшее утро и не сработало вовсе.
+    """
+    now = datetime.now(MSK)
+    try:
+        base = datetime.fromisoformat(after_iso).astimezone(MSK)
+    except Exception:
+        base = now
+    if base < now:
+        base = now
+    d = base + timedelta(days=1)
+    while d.weekday() >= 5:                       # 5 сб, 6 вс
+        d += timedelta(days=1)
+    d = d.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    while d <= now or d.weekday() >= 5:
+        d = (d + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return d
+
+
+def _extract_promises(items):
+    """items: [(ключ, чат, контекст, моя_фраза)] -> {ключ: {...}}"""
+    if not items:
+        return {}
+    import json as _j
+    import urllib.request as _u
+    key = _llm_env("DEEPSEEK_API_KEY")
+    if not key:
+        return {}
+    if len(items) > 3:
+        out = {}
+        for i in range(0, len(items), 3):
+            out.update(_extract_promises(items[i:i + 3]))
+        return out
+    blob = "\n\n".join(
+        "### ЧАТ %d | %s\nПЕРЕПИСКА:\n%s\nПОСЛЕДНЯЯ ФРАЗА ВРАЧА: %s"
+        % (i + 1, name, ctx[:900], mine[:400])
+        for i, (k, name, ctx, mine) in enumerate(items))
+    idx2key = {str(i + 1): k for i, (k, _n, _c, _m) in enumerate(items)}
+    prompt = (
+        "Ты помощник врача (детский травматолог-ортопед). Ниже его собственные "
+        "фразы из переписок. Реши по каждой: взял ли врач на себя дело, которое "
+        "надо не забыть сделать позже.\n\n"
+        "ЭТО ОБЕЩАНИЕ СЕБЕ (нужно напоминание):\n"
+        "  • «поставлю напоминалку», «завтра сделаю», «на работе выпишу»\n"
+        "  • «напомните завтра» — врач переложил напоминание на собеседника, "
+        "но дело всё равно на нём\n"
+        "  • «пришлю», «оформлю», «посмотрю», «уточню» — конкретное действие\n\n"
+        "ЭТО НЕ ОБЕЩАНИЕ:\n"
+        "  • вежливость, «спасибо», «хорошо», «понял», «до встречи»\n"
+        "  • он уже сделал это в переписке\n"
+        "  • действие собеседника, а не врача\n"
+        "  • разговор бытовой, без дела\n\n"
+        "Для каждого обещания реши, нужен ли РАБОЧИЙ компьютер в больнице "
+        "(направление, выписка, справка, история болезни, печать, доступ к базе "
+        "пациентов) — тогда work=true. Звонок, сообщение, чтение — work=false.\n\n"
+        "Верни СТРОГО JSON-массив, элемент:\n"
+        '{"chat":"<НОМЕР чата из заголовка>","promise":true|false,'
+        '"what":"<что сделать, повелительно и коротко: «выписать направление на МРТ»>",'
+        '"who":"<кому/для кого>","work":true|false,'
+        '"date":"<YYYY-MM-DD если врач назвал конкретный день, иначе пустая строка>"}\n'
+        "Для promise:false остальные поля пустые. Без пояснений.\n\n" + blob)
+
+    def _try(url, api_key, model):
+        # 16000: deepseek-v4-flash сжигает ~4 тыс. токенов рассуждений на КАЖДУЮ
+        # фразу и при меньшем лимите отдаёт content ПУСТЫМ — обещания терялись молча
+        body = _j.dumps({"model": model, "max_tokens": 16000, "temperature": 0.1,
+                         "messages": [{"role": "user", "content": prompt}]}).encode()
+        req = _u.Request(url, data=body,
+                         headers={"Authorization": "Bearer " + api_key,
+                                  "Content-Type": "application/json"})
+        r = _j.loads(_u.urlopen(req, timeout=180).read().decode())
+        txt = (((r.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        if txt.startswith("```"):
+            txt = txt.split("```")[1]
+            txt = txt[4:] if txt.lower().startswith("json") else txt
+        i, jx = txt.find("["), txt.rfind("]")
+        if i == -1:
+            return {}
+        arr = _j.loads(txt[i:jx + 1] if jx > i else txt[i:] + "]")
+        out = {}
+        for x in arr:
+            k = idx2key.get(str(x.get("chat") or "").strip())
+            if k and x.get("promise"):
+                out[k] = {"what": (x.get("what") or "").strip(),
+                          "who": (x.get("who") or "").strip(),
+                          "work": bool(x.get("work")),
+                          "date": (x.get("date") or "").strip()}
+        return out
+
+    # Gemini первым: deepseek на этой задаче уходит в многотысячные рассуждения,
+    # медленно и упирается в лимит. Он остаётся резервом.
+    attempts = []
+    ex_key, ex_url = _llm_env("EXCASH_API_KEY"), _llm_env("EXCASH_API_URL")
+    if ex_key and ex_url:
+        attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key,
+                         "gemini-3.7-flash-tiered"))
+    attempts.append(("https://api.deepseek.com/chat/completions", key, "deepseek-v4-flash"))
+    for url, api_key, model in attempts:
+        try:
+            got = _try(url, api_key, model)
+            if got:
+                return got
+            print("(разбор обещаний %s: пустой ответ — пробую резерв)" % model, file=sys.stderr)
+        except Exception as e:
+            print("(разбор обещаний %s: %s — пробую резерв)" % (model, type(e).__name__),
+                  file=sys.stderr)
+    return {}
+
+
+def _make_reminder(name, when_dt, text, key):
+    """Разовое напоминание в личку доктора. declaration-key бережёт от дублей."""
+    import subprocess
+    cmd = ["sudo", "-u", "openclaw", "bash", "-lc",
+           "export NVM_DIR=$HOME/.nvm; . $NVM_DIR/nvm.sh; "
+           + " ".join(shlex.quote(x) for x in [
+               "openclaw", "cron", "add",
+               "--name", name,
+               "--at", when_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+               # background, а не main: у фонового агента нет права отправки от
+               # имени доктора, а напоминанию оно и не нужно (смоук это проверяет)
+               "--agent", "background",
+               # isolated + announce — единственная связка, которая ДОСТАВЛЯЕТ текст:
+               # main-сессия требует --system-event, а она лишь будит агента, и он
+               # может решить, что отвечать нечего — напоминание не дойдёт вовсе
+               "--session", "isolated",
+               "--session-key", OWNER_SESSION,
+               "--delete-after-run",
+               "--announce", "--channel", "telegram",
+               "--expect-final",
+               "--declaration-key", key,
+               "--message", text])]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    return r.returncode == 0, (r.stderr or r.stdout or "").strip()[-200:]
+
+
+def cmd_promises(a):
+    """Найти обещания доктора в его же сообщениях и поставить напоминания.
+
+    Ловит «поставлю напоминалку», «завтра выпишу», «напомните завтра» — и ставит
+    разовое напоминание на ближайшее рабочее утро, потому что направление или
+    выписку он может сделать только с рабочего компьютера."""
+    state = _promise_state()
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=a.hours)
+
+    dialogs = gw("/dialogs", params={"kinds": "user", "days": 7,
+                                     "limit": a.scan}).get("dialogs") or []
+    dialogs += [d for d in (gw("/dialogs", params={"limit": 120}).get("dialogs") or [])
+                if d.get("is_group")]
+
+    cand = []
+    for dl in dialogs:
+        if _noisy(dl.get("name") or "") or dl.get("is_bot") or dl.get("is_self"):
+            continue
+        try:
+            when = datetime.fromisoformat(dl["date"]) if dl.get("date") else None
+        except Exception:
+            when = None
+        if when and when < cutoff:
+            continue
+        msgs = gw("/read", params={"chat": str(dl["id"]), "limit": 10}).get("messages") or []
+        for m in msgs:
+            if not m.get("out"):
+                continue
+            try:
+                mt = datetime.fromisoformat(m["date"]) if m.get("date") else None
+            except Exception:
+                mt = None
+            if not mt or mt < cutoff:
+                continue
+            txt = (m.get("text") or "").strip()
+            if len(txt) < 6 or not any(h in txt.lower() for h in _SELF_HINT):
+                continue
+            key = "%s:%s" % (dl["id"], m.get("id") or mt.isoformat())
+            if key in state:
+                continue
+            ctx = "\n".join(
+                ("ВРАЧ" if x.get("out") else (x.get("sender") or dl["name"])[:20]) + ": "
+                + (x.get("text") or x.get("caption") or "[медиа]").replace("\n", " ")[:180]
+                for x in msgs[::-1])
+            cand.append((key, dl["name"], ctx, txt, mt))
+
+    if not cand:
+        print("За %d ч обещаний не нашлось." % a.hours)
+        return
+
+    found = _extract_promises([(k, n, c, t) for k, n, c, t, _ in cand])
+    by_key = {k: (n, t, mt) for k, n, _c, t, mt in cand}
+
+    # Одно и то же обещание часто повторяется в чате несколько раз («напомните
+    # завтра», потом «поставлю напоминалку»). Оставляем самое свежее упоминание.
+    by_chat = {}
+    for key, p in found.items():
+        chat_id = key.split(":")[0]
+        prev = by_chat.get(chat_id)
+        if prev is None or by_key[key][2] > by_key[prev][2]:
+            by_chat[chat_id] = key
+    dropped = [k for k in found if k not in by_chat.values()]
+    for k in dropped:
+        state[k] = {"what": found[k].get("what", ""), "chat": by_key[k][0],
+                    "made": False, "note": "дубль того же обещания"}
+    found = {k: v for k, v in found.items() if k in by_chat.values()}
+
+    made, skipped = [], []
+    for key, p in found.items():
+        name, said, mt = by_key[key]
+        if p.get("date"):
+            try:
+                d = datetime.strptime(p["date"], "%Y-%m-%d").replace(tzinfo=MSK)
+                when = d.replace(hour=8, minute=30)
+                if when <= datetime.now(MSK):
+                    when = _work_morning(mt.isoformat())
+            except Exception:
+                when = _work_morning(mt.isoformat())
+        elif p.get("work"):
+            when = _work_morning(mt.isoformat())
+        else:
+            when = _work_morning(mt.isoformat(), hour=a.hour_free, minute=0)
+
+        what = p["what"] or "закрыть обещание"
+        who = (" — " + p["who"]) if p.get("who") else ""
+        title = ("Обещал: " + what)[:60]
+        body = (
+            "🔔 Напоминание по обещанию.\n\n"
+            "ЧТО: %s%s\n"
+            "КОМУ: чат «%s»\n"
+            "КОГДА ОБЕЩАЛ: %s, дословно: «%s»\n\n"
+            "Доложи это доктору одним сообщением. Отвечать за него в чате НЕЛЬЗЯ — "
+            "если нужен текст ответа, предложи черновик, отправит он сам. "
+            "Скажет «сделал» — подтверди и больше не поднимай."
+            % (what, who, name, _when(mt.isoformat()), said[:180]))
+
+        if a.dry:
+            skipped.append((when, title, "— пробный прогон, не ставлю"))
+            continue
+        ok, err = _make_reminder(title, when, body, "promise:" + key)
+        state[key] = {"what": what, "who": p.get("who", ""), "chat": name,
+                      "at": when.isoformat(), "made": ok}
+        (made if ok else skipped).append((when, title, "" if ok else err))
+
+    if not a.dry:
+        _promise_save(state)
+
+    print("Просмотрено фраз: %d, обещаний: %d%s" % (
+        len(cand), len(found),
+        (", свёрнуто дублей: %d" % len(dropped)) if dropped else ""))
+    for when, title, note in sorted(made):
+        print("  ✓ %s — %s" % (when.strftime("%d.%m %H:%M"), title))
+    for when, title, note in sorted(skipped):
+        print("  ✗ %s — %s  %s" % (when.strftime("%d.%m %H:%M"), title, note))
+    if made:
+        print("\nНапоминания придут в личку. Снять: openclaw cron list / rm.")
+
+
+_WEEKDAYS = {"понедельник": 0, "вторник": 1, "среда": 2, "среду": 2, "четверг": 3,
+             "пятница": 4, "пятницу": 4, "суббота": 5, "субботу": 5,
+             "воскресенье": 6, "пн": 0, "вт": 1, "ср": 2, "чт": 3, "пт": 4}
+
+
+def _parse_when(s, work=True):
+    """«завтра», «в понедельник», «через 3 дня», «01.09 14:00», «завтра в 14:00».
+
+    Час по умолчанию — 8:30 рабочего утра: доктор делает такие дела только с
+    рабочего компьютера (будни 9-15), и напоминание нужно ДО начала окна.
+    """
+    s = (s or "").strip().lower()
+    now = datetime.now(MSK)
+    hour, minute = (8, 30) if work else (9, 0)
+
+    # только двоеточие: с точкой «01.09 14:00» читалось как время 01:09,
+    # потому что дата съедалась регуляркой времени
+    m = re.search(r"(?:в\s+)?(\d{1,2}):(\d{2})", s)
+    if m:
+        hour, minute = int(m.group(1)), int(m.group(2))
+    elif re.search(r"(?:в\s+)(\d{1,2})\s*(?:ч|час)", s):
+        hour = int(re.search(r"(?:в\s+)(\d{1,2})\s*(?:ч|час)", s).group(1))
+        minute = 0
+
+    def at(d):
+        return d.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    md = re.search(r"\b(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?", s)
+    if md:
+        day, mon = int(md.group(1)), int(md.group(2))
+        year = int(md.group(3) or now.year)
+        if year < 100:
+            year += 2000
+        try:
+            d = at(now.replace(year=year, month=mon, day=day))
+            if d <= now and not md.group(3):
+                d = d.replace(year=year + 1)
+            return d
+        except ValueError:
+            pass
+
+    m = re.search(r"через\s+(\d+)\s*(день|дня|дней|недел)", s)
+    if m:
+        n = int(m.group(1)) * (7 if m.group(2).startswith("недел") else 1)
+        return at(now + timedelta(days=n))
+
+    for word, wd in _WEEKDAYS.items():
+        if re.search(r"\b" + word + r"\b", s):
+            ahead = (wd - now.weekday()) % 7 or 7
+            return at(now + timedelta(days=ahead))
+
+    if "послезавтра" in s:
+        return at(now + timedelta(days=2))
+    if "сегодня" in s:
+        d = at(now)
+        return d if d > now else at(now + timedelta(days=1))
+    if "завтра" in s or not s:
+        d = at(now + timedelta(days=1))
+        if work:
+            while d.weekday() >= 5:
+                d += timedelta(days=1)
+        return d
+    return _work_morning(now.isoformat(), hour, minute)
+
+
+def cmd_remind(a):
+    """Поставить напоминание доктору. Контекст чата подтягивается сам.
+
+    Время по умолчанию — ближайшее рабочее утро 8:30: дела вроде направления
+    или выписки он может закрыть только с рабочего компьютера."""
+    work = not a.anywhere
+    when = _parse_when(a.when, work=work)
+    moved = None
+    if work and when.weekday() >= 5:
+        was = when
+        while when.weekday() >= 5:
+            when += timedelta(days=1)
+        moved = "%s — выходной, перенёс на %s" % (was.strftime("%d.%m"), when.strftime("%d.%m"))
+    if when <= datetime.now(MSK):
+        sys.exit("время «%s» уже прошло (%s). Уточни день." % (a.when, when.strftime("%d.%m %H:%M")))
+
+    ctx, chat_label = "", ""
+    if a.chat:
+        target = _resolve_strict(a.chat)
+        msgs = gw("/read", params={"chat": target, "limit": a.ctx}).get("messages") or []
+        chat_label = a.chat
+        ctx = "\n".join(
+            ("ДОКТОР" if m.get("out") else (m.get("sender") or a.chat)[:22]) + ": "
+            + (m.get("text") or m.get("caption") or "[медиа]").replace("\n", " ")[:200]
+            for m in msgs[::-1])
+
+    body = "🔔 Напоминание.\n\nЧТО: %s\n" % a.text
+    if chat_label:
+        body += "ЧАТ: «%s»\n\nПоследние сообщения оттуда:\n%s\n" % (chat_label, ctx)
+    body += ("\nДоложи это доктору одним сообщением. Отвечать за него в чате НЕЛЬЗЯ — "
+             "нужен текст, предложи черновик, отправит он сам. "
+             "Скажет «сделал» — подтверди и больше не поднимай.")
+
+    key = a.key or ("remind:%s:%s" % (re.sub(r"\W+", "-", (chat_label or a.text))[:40].strip("-"),
+                                      when.strftime("%Y%m%d%H%M")))
+    ok, err = _make_reminder(("Напомнить: " + a.text)[:60], when, body, key)
+    if not ok:
+        sys.exit("не удалось поставить напоминание: " + err)
+    if moved:
+        print("(%s)" % moved)
+    print("OK: напоминание на %s (мск)%s\n  ЧТО: %s"
+          % (when.strftime("%d.%m %H:%M"), (" по чату «%s»" % chat_label) if chat_label else "",
+             a.text))
+    print("  снять: sudo /root/yoda_tg.sh unremind %s" % key)
+
+
+def cmd_unremind(a):
+    """Снять поставленное напоминание по ключу или по куску названия."""
+    import subprocess
+    r = subprocess.run(["sudo", "-u", "openclaw", "bash", "-lc",
+                        "export NVM_DIR=$HOME/.nvm; . $NVM_DIR/nvm.sh; openclaw cron list --json"],
+                       capture_output=True, text=True, timeout=120)
+    try:
+        data = json.loads(r.stdout)
+        jobs = data if isinstance(data, list) else (data.get("jobs") or [])
+    except Exception:
+        sys.exit("не смог прочитать список напоминаний")
+    low = a.key.lower()
+    hits = [j for j in jobs
+            if low in str(j.get("declarationKey") or "").lower()
+            or low in str(j.get("name") or "").lower()]
+    if not hits:
+        sys.exit("напоминание «%s» не найдено" % a.key)
+    for j in hits:
+        subprocess.run(["sudo", "-u", "openclaw", "bash", "-lc",
+                        "export NVM_DIR=$HOME/.nvm; . $NVM_DIR/nvm.sh; "
+                        + "openclaw cron rm " + shlex.quote(j["id"])],
+                       capture_output=True, text=True, timeout=120)
+        print("снято: %s" % j.get("name"))
+
+
 def cmd_send(a):
     """Отправка от имени доктора. Требует --confirm yes."""
     if a.confirm != "yes":
@@ -782,6 +1217,23 @@ def main():
     ds.add_argument("--forever", action="store_true")
 
     sub.add_parser("dismissed", help="что сейчас замято и как вернуть")
+    rm_ = sub.add_parser("remind", help="поставить напоминание доктору")
+    rm_.add_argument("text", help="что сделать, коротко и повелительно")
+    rm_.add_argument("--when", default="завтра",
+                     help="«завтра», «в понедельник», «через 3 дня», «01.09 14:00», «завтра в 14:00»")
+    rm_.add_argument("--chat", help="чат, контекст которого подтянуть в напоминание")
+    rm_.add_argument("--ctx", type=int, default=6, help="сколько сообщений контекста")
+    rm_.add_argument("--anywhere", action="store_true",
+                     help="дело НЕ требует рабочего компьютера (тогда 9:00 и выходные не пропускаем)")
+    rm_.add_argument("--key", help="свой ключ идемпотентности")
+    ur = sub.add_parser("unremind", help="снять напоминание")
+    ur.add_argument("key", help="ключ или кусок названия")
+    pr = sub.add_parser("promises", help="найти обещания доктора и поставить напоминания")
+    pr.add_argument("--hours", type=int, default=18, help="за сколько часов смотреть")
+    pr.add_argument("--scan", type=int, default=300, help="сколько личных чатов взять")
+    pr.add_argument("--hour-free", type=int, default=9,
+                    help="час для дел, не требующих рабочего компьютера")
+    pr.add_argument("--dry", action="store_true", help="показать, но не ставить")
     sn = sub.add_parser("send"); sn.add_argument("chat"); sn.add_argument("text")
     sn.add_argument("--confirm", default="no")
     sf = sub.add_parser("sendfile"); sf.add_argument("chat"); sf.add_argument("path")
@@ -790,7 +1242,8 @@ def main():
 
     {"dialogs": cmd_dialogs, "read": cmd_read, "search": cmd_search, "media": cmd_media,
      "digest": cmd_digest, "pending": cmd_pending, "dismiss": cmd_dismiss,
-     "dismissed": cmd_dismissed,
+     "dismissed": cmd_dismissed, "promises": cmd_promises,
+     "remind": cmd_remind, "unremind": cmd_unremind,
      "send": cmd_send, "sendfile": cmd_sendfile}[a.cmd](a)
 
 
