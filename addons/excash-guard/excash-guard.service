@@ -1,0 +1,11 @@
+[Unit]
+Description=excash_guard — превращает «200 + ошибка в потоке» в честный HTTP 502, чтобы работал автофолбэк моделей
+After=network-online.target
+[Service]
+ExecStart=/home/openclaw/mailvenv/bin/python /home/openclaw/.openclaw/excash_guard.py
+Environment=EXCASH_UPSTREAM=https://ai.externcashpn.cv/v1
+Environment=EXCASH_GUARD_PORT=8788
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=default.target
