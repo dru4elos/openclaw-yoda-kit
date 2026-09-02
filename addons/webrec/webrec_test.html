@@ -1,0 +1,11 @@
+<!doctype html><meta charset="utf-8"><title>webrec test</title>
+<body style="margin:0;background:#123;color:#fff;font:bold 64px sans-serif;display:flex;align-items:center;justify-content:center;height:100vh">
+<div id="t">старт</div>
+<script>
+const ctx=new (window.AudioContext||window.webkitAudioContext)();
+const o=ctx.createOscillator(); const g=ctx.createGain(); g.gain.value=0.3;
+o.frequency.value=440; o.connect(g); g.connect(ctx.destination); o.start();
+setInterval(()=>{o.frequency.value = 440 + 220*Math.round(Math.random());
+  document.getElementById("t").textContent="ТЕСТ ЗАПИСИ  "+new Date().toLocaleTimeString("ru-RU")+"  тон "+o.frequency.value+" Гц";
+  document.body.style.background = "hsl("+(Date.now()/40%360)+",40%,25%)";},250);
+</script>

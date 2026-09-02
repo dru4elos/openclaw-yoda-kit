@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""webrec — запись экрана и звука виртуального браузера (Xvfb :99 + PulseAudio «webrec»).
+
+  webrec.py start  --out ДИР --name ИМЯ [--duration СЕК | --until HH:MM] [--segment 600]
+  webrec.py status --out ДИР
+  webrec.py stop   --out ДИР           # аккуратно завершает ffmpeg, склеивает, проверяет
+  webrec.py check  ФАЙЛ.mp4            # длительность, потоки, громкость звука
+  webrec.py selftest                    # 12-секундная запись тестовой страницы
+
+Пишет сегментами (по умолчанию 10 мин): упавший ffmpeg теряет не всё, а один
+кусок. Браузер должен рисовать в :99 и играть звук в sink «webrec» — это делает
+обёртка chrome-rec, через которую OpenClaw запускает Chrome.
+"""
+import argparse
+import datetime as dt
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+
+DISPLAY = ":99"
+SINK = "webrec"
+SIZE = "1280x720"
+FPS = "15"
+MSK = dt.timezone(dt.timedelta(hours=3))
+
+
+def _env():
+    e = dict(os.environ)
+    uid = os.getuid()
+    e["XDG_RUNTIME_DIR"] = e.get("XDG_RUNTIME_DIR") or f"/run/user/{uid}"
+    e["PULSE_SERVER"] = f"unix:{e['XDG_RUNTIME_DIR']}/pulse/native"
+    e["DISPLAY"] = DISPLAY
+    return e
+
+
+def _sh(cmd, **kw):
+    return subprocess.run(cmd, capture_output=True, text=True, env=_env(), **kw)
+
+
+def preflight():
+    """Экран и звук должны быть живы ДО записи — иначе ffmpeg молча пишет чёрное/тишину."""
+    probs = []
+    if _sh(["xdpyinfo", "-display", DISPLAY]).returncode != 0:
+        probs.append(f"нет экрана {DISPLAY} — systemctl --user start xvfb-webrec")
+    r = _sh(["pactl", "list", "sinks", "short"])
+    if r.returncode != 0 or SINK not in r.stdout:
+        probs.append(f"нет звуковой карты «{SINK}» — systemctl --user start pulse-webrec")
+    if _sh(["which", "ffmpeg"]).returncode != 0:
+        probs.append("нет ffmpeg")
+    return probs
+
+
+def _pidfile(out):
+    return os.path.join(out, ".webrec.pid")
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def cmd_start(a):
+    probs = preflight()
+    if probs:
+        sys.exit("НЕ СТАРТУЮ:\n  " + "\n  ".join(probs))
+    os.makedirs(a.out, exist_ok=True)
+    pf = _pidfile(a.out)
+    if os.path.exists(pf):
+        try:
+            old = int(open(pf).read().strip())
+            if _alive(old):
+                sys.exit(f"уже идёт запись (pid {old}) — сначала stop")
+        except ValueError:
+            pass
+    seconds = None
+    if a.until:
+        hh, mm = map(int, a.until.split(":"))
+        now = dt.datetime.now(MSK)
+        end = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if end <= now:
+            end += dt.timedelta(days=1)
+        seconds = int((end - now).total_seconds())
+    elif a.duration:
+        seconds = int(a.duration)
+    pattern = os.path.join(a.out, f"{a.name}_%Y%m%d_%H%M%S.mp4")
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+           "-f", "x11grab", "-framerate", FPS, "-video_size", SIZE, "-i", DISPLAY,
+           "-f", "pulse", "-i", f"{SINK}.monitor",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p",
+           "-g", "30",
+           "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+           "-f", "segment", "-segment_time", str(a.segment), "-reset_timestamps", "1",
+           "-strftime", "1", pattern]
+    if seconds:
+        cmd[1:1] = ["-t", str(seconds)]     # общий лимит; segment режет внутри
+    log = open(os.path.join(a.out, "webrec.log"), "a")
+    p = subprocess.Popen(cmd, stdout=log, stderr=log, env=_env(),
+                         start_new_session=True)
+    open(pf, "w").write(str(p.pid))
+    time.sleep(3)
+    if p.poll() is not None:
+        sys.exit("ffmpeg упал сразу — смотри " + os.path.join(a.out, "webrec.log"))
+    print(json.dumps({"ok": True, "pid": p.pid, "out": a.out, "name": a.name,
+                      "limit_sec": seconds, "segment_sec": a.segment,
+                      "started": dt.datetime.now(MSK).strftime("%H:%M:%S")},
+                     ensure_ascii=False))
+
+
+def _segments(out, name=None):
+    fs = sorted(f for f in os.listdir(out)
+                if f.endswith(".mp4") and (name is None or f.startswith(name + "_"))
+                and "_full" not in f)
+    return [os.path.join(out, f) for f in fs]
+
+
+def probe(path):
+    r = _sh(["ffprobe", "-v", "error", "-show_entries",
+             "format=duration,size:stream=codec_type,codec_name", "-of", "json", path])
+    try:
+        j = json.loads(r.stdout)
+    except Exception:
+        return {"ok": False, "err": (r.stderr or "")[-200:]}
+    st = j.get("streams", [])
+    d = float(j.get("format", {}).get("duration") or 0)
+    return {"ok": True, "duration_sec": round(d, 1),
+            "size_mb": round(int(j.get("format", {}).get("size") or 0) / 1e6, 1),
+            "video": any(s.get("codec_type") == "video" for s in st),
+            "audio": any(s.get("codec_type") == "audio" for s in st)}
+
+
+def loudness(path):
+    """mean_volume ниже −55 дБ = записалась тишина. Проверять ОБЯЗАТЕЛЬНО."""
+    r = _sh(["ffmpeg", "-hide_banner", "-i", path, "-af", "volumedetect",
+             "-vn", "-f", "null", "-"])
+    out = r.stderr or ""
+    mean = max_ = None
+    for line in out.splitlines():
+        if "mean_volume" in line:
+            mean = float(line.split("mean_volume:")[1].split("dB")[0])
+        if "max_volume" in line:
+            max_ = float(line.split("max_volume:")[1].split("dB")[0])
+    return mean, max_
+
+
+def cmd_check(a):
+    p = probe(a.file)
+    print("файл:", a.file)
+    print(json.dumps(p, ensure_ascii=False))
+    if not p.get("ok"):
+        sys.exit(1)
+    mean, mx = loudness(a.file)
+    verdict = ("ЗВУК ЕСТЬ" if (mean is not None and mean > -55) else
+               "ТИШИНА — звук не записался" if mean is not None else "громкость не измерена")
+    print(f"громкость: mean {mean} dB, max {mx} dB → {verdict}")
+    if not p.get("video"):
+        print("ВИДЕО НЕТ")
+    ok = p.get("video") and p.get("audio") and mean is not None and mean > -55 and p["duration_sec"] > 1
+    print("ИТОГ:", "OK" if ok else "БРАК")
+    sys.exit(0 if ok else 2)
+
+
+def cmd_status(a):
+    pf = _pidfile(a.out)
+    pid = None
+    if os.path.exists(pf):
+        try:
+            pid = int(open(pf).read().strip())
+        except ValueError:
+            pass
+    segs = _segments(a.out)
+    info = {"recording": bool(pid and _alive(pid)), "pid": pid, "segments": len(segs)}
+    if segs:
+        last = segs[-1]
+        info["last_segment"] = os.path.basename(last)
+        info["last_segment_mb"] = round(os.path.getsize(last) / 1e6, 1)
+        info["last_write_sec_ago"] = int(time.time() - os.path.getmtime(last))
+        info["total_mb"] = round(sum(os.path.getsize(s) for s in segs) / 1e6, 1)
+    print(json.dumps(info, ensure_ascii=False))
+
+
+def cmd_stop(a):
+    pf = _pidfile(a.out)
+    pid = None
+    if os.path.exists(pf):
+        try:
+            pid = int(open(pf).read().strip())
+        except ValueError:
+            pass
+    if pid and _alive(pid):
+        os.kill(pid, signal.SIGINT)          # ffmpeg дописывает контейнер корректно
+        for _ in range(60):
+            if not _alive(pid):
+                break
+            time.sleep(1)
+        else:
+            os.kill(pid, signal.SIGKILL)
+        print("ffmpeg остановлен")
+    else:
+        print("запись не шла (pid нет) — только склеиваю то, что есть")
+    if os.path.exists(pf):
+        os.remove(pf)
+    segs = _segments(a.out, a.name)
+    if not segs:
+        sys.exit("сегментов нет — записи не было")
+    name = a.name or os.path.basename(segs[0]).rsplit("_", 2)[0]
+    full = os.path.join(a.out, f"{name}_full.mp4")
+    lst = os.path.join(a.out, ".concat.txt")
+    with open(lst, "w") as fh:
+        for s in segs:
+            fh.write("file '%s'\n" % s.replace("'", r"'\''"))
+    r = _sh(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat",
+             "-safe", "0", "-i", lst, "-c", "copy", full])
+    if r.returncode != 0:
+        print("склейка не удалась:", (r.stderr or "")[-300:])
+        full = segs[-1]
+    p = probe(full)
+    mean, mx = loudness(full)
+    print(json.dumps({"segments": len(segs), "full": full, **p,
+                      "mean_db": mean, "max_db": mx,
+                      "sound": (mean is not None and mean > -55)}, ensure_ascii=False))
+    if not (p.get("audio") and mean is not None and mean > -55):
+        print("ВНИМАНИЕ: звука в записи нет или он на уровне тишины")
+
+
+def cmd_selftest(a):
+    """Полный круг без OpenClaw: свой Chrome на тестовой странице → 12 с записи → проверка."""
+    probs = preflight()
+    if probs:
+        sys.exit("селфтест невозможен:\n  " + "\n  ".join(probs))
+    here = os.path.dirname(os.path.abspath(__file__))
+    page = os.path.join(here, "webrec_test.html")
+    out = "/tmp/webrec_selftest"
+    subprocess.run(["rm", "-rf", out]); os.makedirs(out)
+    prof = "/tmp/webrec_selftest_profile"
+    subprocess.run(["rm", "-rf", prof])
+    chrome = subprocess.Popen([os.path.expanduser("~/bin/chrome-rec"),
+                               "--user-data-dir=" + prof, "--no-first-run",
+                               "--remote-debugging-port=18899", "file://" + page],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              env=_env(), start_new_session=True)
+    time.sleep(6)
+    ns = argparse.Namespace(out=out, name="selftest", duration=12, until=None, segment=600)
+    cmd_start(ns)
+    time.sleep(15)
+    ns2 = argparse.Namespace(out=out, name="selftest")
+    cmd_stop(ns2)
+    try:
+        os.killpg(os.getpgid(chrome.pid), signal.SIGTERM)
+    except Exception:
+        pass
+    full = os.path.join(out, "selftest_full.mp4")
+    print("файл селфтеста:", full)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("start"); s.add_argument("--out", required=True); s.add_argument("--name", required=True)
+    s.add_argument("--duration", type=int); s.add_argument("--until", help="HH:MM мск")
+    s.add_argument("--segment", type=int, default=600)
+    st = sub.add_parser("status"); st.add_argument("--out", required=True)
+    sp = sub.add_parser("stop"); sp.add_argument("--out", required=True); sp.add_argument("--name")
+    c = sub.add_parser("check"); c.add_argument("file")
+    sub.add_parser("selftest")
+    a = ap.parse_args()
+    {"start": cmd_start, "status": cmd_status, "stop": cmd_stop,
+     "check": cmd_check, "selftest": cmd_selftest}[a.cmd](a)
+
+
+if __name__ == "__main__":
+    main()

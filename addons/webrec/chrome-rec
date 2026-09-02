@@ -1,0 +1,20 @@
+#!/bin/bash
+# Обёртка над полным Chrome для OpenClaw: рисует в Xvfb :99, звук — в null-sink
+# «webrec», откуда его пишет ffmpeg. Плагин браузера зовёт её как executablePath.
+export DISPLAY=:99
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export PULSE_SERVER="unix:${XDG_RUNTIME_DIR}/pulse/native"
+export PULSE_SINK=webrec
+args=()
+for a in "$@"; do
+  case "$a" in
+    --headless|--headless=*) ;;          # headless сорвал бы отрисовку в Xvfb
+    *) args+=("$a") ;;
+  esac
+done
+exec /opt/chrome-full/chrome-linux64/chrome "${args[@]}" \
+  --autoplay-policy=no-user-gesture-required \
+  --window-size=1280,720 --window-position=0,0 --start-maximized \
+  --no-sandbox --disable-gpu --disable-dev-shm-usage \
+  --deny-permission-prompts --disable-infobars \
+  --lang=ru-RU

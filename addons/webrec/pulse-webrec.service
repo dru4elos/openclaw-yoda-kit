@@ -1,0 +1,8 @@
+[Unit]
+Description=PulseAudio с null-sink «webrec» — виртуальная звуковая карта для записи
+[Service]
+ExecStart=/usr/bin/pulseaudio --daemonize=no --exit-idle-time=-1 --disallow-exit -n -F %h/.config/pulse/webrec.pa --log-target=journal
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=default.target

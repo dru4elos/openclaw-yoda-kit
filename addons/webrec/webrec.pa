@@ -1,0 +1,5 @@
+# Минимальный PulseAudio: только сокет и виртуальная карта. Без udev/bluetooth —
+# на сервере устройств нет, и лишние модули только падают в лог.
+load-module module-native-protocol-unix
+load-module module-null-sink sink_name=webrec sink_properties=device.description=webrec
+set-default-sink webrec
