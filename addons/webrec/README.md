@@ -58,3 +58,29 @@ PULSE_SINK=webrec
 - Сегменты по 10 минут: упавший ffmpeg теряет кусок, а не эфир. `stop` склеивает
   и меряет громкость сам.
 - Нагрузка: 720p @ 15 fps, x264 veryfast — около одного ядра, ~150–250 МБ/час.
+
+## Два профиля браузера — чтобы чат не мешал записи
+
+Один профиль на всё — ловушка: любая браузерная задача из чата откроет вкладку в
+том же окне, которое пишет ffmpeg. Правильно так (в `openclaw.json`):
+
+```json5
+browser: {
+  enabled: true, defaultProfile: "openclaw",
+  profiles: {
+    openclaw: { cdpPort: 18800, headless: true,  executablePath: "/opt/chrome-headless/chrome-headless-shell" },
+    rec:      { cdpPort: 18801, headless: false, executablePath: "/home/openclaw/bin/chrome-rec",
+                userDataDir: "~/.openclaw/browser/rec/user-data" }
+  }
+}
+```
+В задании на эфир агент вызывает `browser` с `profile: "rec"`. Чат остаётся в
+headless-профиле и в запись не попадает.
+
+## Инцидент 02.09, чтобы не повторить
+
+Агент запустил `selftest` фоновым процессом и убил его на середине: окно Chrome
+селфтеста осталось поверх экрана, и 47 минут эфира записались как тестовая
+страница с тоном. Теперь `selftest` отказывается стартовать при живом браузере
+или идущей записи и всегда убирает своё окно (`finally`). В задании на эфир
+селфтест не вызывать — экран проверяет `start` сам.

@@ -228,11 +228,30 @@ def cmd_stop(a):
         print("ВНИМАНИЕ: звука в записи нет или он на уровне тишины")
 
 
+def _screen_busy():
+    """Есть ли на :99 чужой Chrome (браузер OpenClaw) или идущая запись.
+
+    02.09.2026 селфтест запустили во время живого эфира: его окно легло ПОВЕРХ
+    вебинара, агент упал и не убрал его — 47 минут записи ушли на тестовую
+    страницу с тоном. Больше селфтест на занятом экране не стартует."""
+    r = _sh(["pgrep", "-u", str(os.getuid()), "-f", "remote-debugging-port=18800"])
+    if r.returncode == 0 and r.stdout.strip():
+        return "на :99 уже работает браузер OpenClaw (порт 18800) — селфтест лёг бы поверх него"
+    r = _sh(["pgrep", "-u", str(os.getuid()), "-f", "x11grab"])
+    if r.returncode == 0 and r.stdout.strip():
+        return "идёт запись (ffmpeg x11grab) — селфтест испортил бы её"
+    return None
+
+
 def cmd_selftest(a):
     """Полный круг без OpenClaw: свой Chrome на тестовой странице → 12 с записи → проверка."""
     probs = preflight()
     if probs:
         sys.exit("селфтест невозможен:\n  " + "\n  ".join(probs))
+    busy = _screen_busy()
+    if busy and not a.force:
+        sys.exit("СЕЛФТЕСТ ОТМЕНЁН: " + busy + ". Экран и звук живы (preflight OK) — этого достаточно. "
+                 "Принудительно: --force, но НЕ во время эфира.")
     here = os.path.dirname(os.path.abspath(__file__))
     page = os.path.join(here, "webrec_test.html")
     out = "/tmp/webrec_selftest"
@@ -245,15 +264,22 @@ def cmd_selftest(a):
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                               env=_env(), start_new_session=True)
     time.sleep(6)
-    ns = argparse.Namespace(out=out, name="selftest", duration=12, until=None, segment=600)
-    cmd_start(ns)
-    time.sleep(15)
-    ns2 = argparse.Namespace(out=out, name="selftest")
-    cmd_stop(ns2)
     try:
-        os.killpg(os.getpgid(chrome.pid), signal.SIGTERM)
-    except Exception:
-        pass
+        ns = argparse.Namespace(out=out, name="selftest", duration=12, until=None, segment=600)
+        cmd_start(ns)
+        time.sleep(15)
+        ns2 = argparse.Namespace(out=out, name="selftest")
+        cmd_stop(ns2)
+    finally:
+        # Chrome селфтеста убираем ВСЕГДА, даже если упали посередине —
+        # иначе его окно остаётся поверх экрана и попадает в чужую запись
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(os.getpgid(chrome.pid), sig)
+            except Exception:
+                pass
+            time.sleep(1)
+        subprocess.run(["pkill", "-u", str(os.getuid()), "-f", "user-data-dir=" + prof])
     full = os.path.join(out, "selftest_full.mp4")
     print("файл селфтеста:", full)
 
@@ -268,7 +294,7 @@ def main():
     st = sub.add_parser("status"); st.add_argument("--out", required=True)
     sp = sub.add_parser("stop"); sp.add_argument("--out", required=True); sp.add_argument("--name")
     c = sub.add_parser("check"); c.add_argument("file")
-    sub.add_parser("selftest")
+    se = sub.add_parser("selftest"); se.add_argument("--force", action="store_true")
     a = ap.parse_args()
     {"start": cmd_start, "status": cmd_status, "stop": cmd_stop,
      "check": cmd_check, "selftest": cmd_selftest}[a.cmd](a)
