@@ -22,7 +22,7 @@ import time
 import aiohttp
 from aiohttp import web
 
-UPSTREAM = os.environ.get("EXCASH_UPSTREAM", "https://ai.externcashpn.cv/v1").rstrip("/")
+UPSTREAM = os.environ.get("EXCASH_UPSTREAM", "https://<ваш-агрегатор>/v1").rstrip("/")
 PORT = int(os.environ.get("EXCASH_GUARD_PORT", "8788"))
 # сколько ждать первого осмысленного кадра, прежде чем признать поток живым
 FIRST_CHUNK_TIMEOUT = float(os.environ.get("EXCASH_GUARD_FIRST_CHUNK_TIMEOUT", "90"))

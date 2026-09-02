@@ -3,7 +3,7 @@ Description=excash_guard — превращает «200 + ошибка в пот
 After=network-online.target
 [Service]
 ExecStart=/home/openclaw/mailvenv/bin/python /home/openclaw/.openclaw/excash_guard.py
-Environment=EXCASH_UPSTREAM=https://ai.externcashpn.cv/v1
+Environment=EXCASH_UPSTREAM=https://<ваш-агрегатор>/v1
 Environment=EXCASH_GUARD_PORT=8788
 Restart=always
 RestartSec=3
