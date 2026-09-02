@@ -6,6 +6,8 @@
   webrec.py stop   --out ДИР           # аккуратно завершает ffmpeg, склеивает, проверяет
   webrec.py check  ФАЙЛ.mp4            # длительность, потоки, громкость звука
   webrec.py selftest                    # 12-секундная запись тестовой страницы
+  webrec.py unmute [--port 18800] [--match webinar]   # снять паузу/mute с плееров комнаты
+  webrec.py probe  [--seconds 6]        # есть ли звук в карте ПРЯМО СЕЙЧАС
 
 Пишет сегментами (по умолчанию 10 мин): упавший ffmpeg теряет не всё, а один
 кусок. Браузер должен рисовать в :99 и играть звук в sink «webrec» — это делает
@@ -284,6 +286,77 @@ def cmd_selftest(a):
     print("файл селфтеста:", full)
 
 
+def cmd_probe(a):
+    """Живой замер монитора карты: есть ли звук ПРЯМО СЕЙЧАС, не дожидаясь сегмента.
+
+    02.09 запись выглядела здоровой (поток в карту есть, кадр есть), а сегмент
+    оказался немым: плееры комнаты стояли на паузе. Проверять надо сам звук."""
+    probs = preflight()
+    if probs:
+        sys.exit("НЕ МОГУ: " + "; ".join(probs))
+    r = _sh(["ffmpeg", "-hide_banner", "-f", "pulse", "-i", f"{SINK}.monitor",
+             "-t", str(a.seconds), "-af", "volumedetect", "-f", "null", "-"])
+    mean = None
+    for line in (r.stderr or "").splitlines():
+        if "mean_volume" in line:
+            mean = float(line.split("mean_volume:")[1].split("dB")[0])
+    ok = mean is not None and mean > -55
+    print(json.dumps({"sound": ok, "mean_db": mean, "seconds": a.seconds,
+                      "verdict": "звук идёт" if ok else "ТИШИНА — включи плееры (webrec unmute) и проверь вкладку"},
+                     ensure_ascii=False))
+    sys.exit(0 if ok else 2)
+
+
+def cmd_unmute(a):
+    """Снять паузу и mute со всех <video>/<audio> во вкладке эфира через CDP.
+
+    Комнаты вебинаров (Pruffme и др.) часто стартуют плееры на паузе, пока
+    пользователь не кликнет. Runtime.evaluate с userGesture=true даёт браузеру
+    «жест пользователя», и play() со звуком проходит."""
+    import urllib.request
+    try:
+        import asyncio, websockets
+    except ImportError:
+        sys.exit("нужен пакет websockets (есть в ~/mailvenv) — запускай ~/mailvenv/bin/python")
+    tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{a.port}/json"))
+    tab = next((t for t in tabs if t.get("type") == "page" and a.match in (t.get("url") or "")), None)
+    if not tab:
+        sys.exit(f"вкладка с «{a.match}» не найдена на порту {a.port}: "
+                 + ", ".join((t.get("url") or "")[:50] for t in tabs if t.get("type") == "page"))
+    STATE = ("(() => [...document.querySelectorAll('video,audio')].map((m,i)=>({i,tag:m.tagName,"
+             "paused:m.paused,muted:m.muted,vol:m.volume})))()")
+    FIX = """(async () => { const out=[];
+      for (const m of document.querySelectorAll('video,audio')) {
+        try { m.muted=false; m.volume=1; if (m.paused) await m.play(); out.push({paused:m.paused,muted:m.muted}); }
+        catch(e) { out.push({err:String(e).slice(0,60)}); } }
+      try { if (window.AudioContext) { const c=new AudioContext(); await c.resume(); } } catch(e){}
+      return out; })()"""
+
+    async def run():
+        # жёсткие таймауты: 02.09 подключение к вкладке зависло и утащило за собой
+        # весь вызов — агент бы ждал вечно
+        async with websockets.connect(tab["webSocketDebuggerUrl"], max_size=None,
+                                      open_timeout=15, close_timeout=5) as ws:
+            async def ev(i, expr, gesture=False):
+                await ws.send(json.dumps({"id": i, "method": "Runtime.evaluate",
+                                          "params": {"expression": expr, "returnByValue": True,
+                                                     "awaitPromise": True, "userGesture": gesture}}))
+                while True:
+                    m = json.loads(await ws.recv())
+                    if m.get("id") == i:
+                        return m.get("result", {}).get("result", {}).get("value")
+            before = await ev(1, STATE)
+            await ev(2, FIX, gesture=True)
+            await asyncio.sleep(2)
+            after = await ev(3, STATE)
+            print(json.dumps({"tab": (tab.get("url") or "")[:80], "before": before, "after": after},
+                             ensure_ascii=False)[:900])
+    try:
+        asyncio.run(asyncio.wait_for(run(), timeout=45))
+    except Exception as e:
+        sys.exit("unmute не удался: %s: %s" % (type(e).__name__, str(e)[:120]))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -295,9 +368,12 @@ def main():
     sp = sub.add_parser("stop"); sp.add_argument("--out", required=True); sp.add_argument("--name")
     c = sub.add_parser("check"); c.add_argument("file")
     se = sub.add_parser("selftest"); se.add_argument("--force", action="store_true")
+    pb = sub.add_parser("probe", help="есть ли звук в карте прямо сейчас"); pb.add_argument("--seconds", type=int, default=6)
+    um = sub.add_parser("unmute", help="снять паузу/mute с плееров во вкладке эфира")
+    um.add_argument("--port", type=int, default=18800); um.add_argument("--match", default="webinar")
     a = ap.parse_args()
-    {"start": cmd_start, "status": cmd_status, "stop": cmd_stop,
-     "check": cmd_check, "selftest": cmd_selftest}[a.cmd](a)
+    {"start": cmd_start, "status": cmd_status, "stop": cmd_stop, "check": cmd_check,
+     "selftest": cmd_selftest, "probe": cmd_probe, "unmute": cmd_unmute}[a.cmd](a)
 
 
 if __name__ == "__main__":
