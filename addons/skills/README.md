@@ -22,3 +22,6 @@
 
 ## webinar — эфир под ключ
 `plan` одним вызовом ставит кроны: регистрация → вход и запись (webrec, профиль `rec`) → контроль звука → обработка командным кроном без агента: GigaAM v3 по кускам (контейнер из addons/med-mcp… см. addons/webrec/README) → чистка огрехов ASR (gemini-3.8-flash) → подробный конспект (gpt-6-astra-1m) → файлы владельцу через Bot API. Нужны в `.env`: `OWNER_TG_ID`, `GIGAAM_ASR_URL`, `EXCASH_API_URL/KEY`, по желанию `WEBINAR_READER` (кто читатель конспекта). `selftest` гоняет весь контур на куске прошлой записи и сам отбраковывает немые куски и тон вместо речи.
+
+## say — голос (piper, локально)
+Русский `ru_RU-dmitri-medium` и итальянский `it_IT-paola-medium` в `/opt/piper-voices` (скачать с huggingface.co/rhasspy/piper-voices; с сервера HF может не отдавать — качайте на рабочей машине и scp). `pip install piper-tts==1.6.0` в venv бота. `--lang ru|it|auto`, резерв edge-tts. Кому слать — `OWNER_TG_ID` в `.env`. Встроенный `tts` OpenClaw при этом лучше запретить в `tools.deny`.
