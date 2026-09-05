@@ -1,0 +1,15 @@
+#!/bin/bash
+# Панель управления Йоды (Control UI OpenClaw 2.0) с этого Мака через SSH-туннель.
+# Сервер наружу не открывается, Tailscale не нужен: гейтвей слушает только loopback,
+# туннель приводит его на 127.0.0.1:18789 здесь. Токен берётся с сервера на лету и на Маке не хранится.
+set -e
+PORT=18789
+URL=$(ssh vps "su - openclaw -c 'source ~/.nvm/nvm.sh >/dev/null 2>&1; openclaw dashboard --json --no-open 2>/dev/null'" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["url"])')
+if ! lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1; then
+  ssh -f -N -L $PORT:127.0.0.1:$PORT vps
+  for i in 1 2 3 4 5; do curl -s -o /dev/null http://127.0.0.1:$PORT/ && break; sleep 1; done
+fi
+open "$URL"
+echo "Панель: $URL"
+echo "Туннель висит фоном. Закрыть: pkill -f 'ssh -f -N -L $PORT'"

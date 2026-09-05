@@ -67,3 +67,46 @@ account default routing has no explicit owner» — нужны `bindings` и `ta
 `openclaw mcp probe` (все серверы), `openclaw cron list` (все задания и их
 `--model`), `channels status` (running, connected), таблица в чат
 (`operation=sendRichMessage` в журнале), и — обязательно — порт слушает.
+
+## После обновления: что ещё ломается тихо (05.09, тот же день)
+
+**Транскрипты сессий больше не пишутся в JSONL.** 2.0 держит их в SQLite
+`~/.openclaw/agents/<agent>/agent/openclaw-agent.sqlite` (`transcript_events.event_json`,
+форма — та же строка JSONL), а старые файлы импорт складывает в
+`agents/<agent>/session-sqlite-import-archive/<ключ>.<uuid>.jsonl.imported-<мс>`.
+Любой свой индекс по JSONL после этого замирает на дате апгрейда и молчит. Наш
+`addons/skills/recall/recall.py` v2 читает SQLite всех агентов + архив импорта +
+архивы `.jsonl.reset.*` (те раньше не индексировались вовсе); ключ сессии — uuid,
+общий с SQLite, чтобы не дублировать. Родной `sessions_search` видит один агент и только
+SQLite — мы его выключили через `tools.deny` и оставили `recall`.
+
+**Профиль браузера по умолчанию может подхватить snap-хромиум.** Ему AppArmor
+(`snap.chromium.chromium`) запрещает трогать `~/.openclaw` → «Failed to unlink
+SingletonLock: Permission denied», браузер не стартует. Лечится только явным
+`browser.profiles.<имя>.executablePath` на полный Chrome. `headless` и `executablePath`
+задаются на профиль — так живут два браузера сразу:
+
+```json
+"browser": {"enabled": true, "headless": true, "noSandbox": true, "defaultProfile": "openclaw",
+  "profiles": {
+    "openclaw": {"cdpPort": 18800, "headless": true,  "executablePath": "/opt/chrome-full/chrome-linux64/chrome"},
+    "rec":      {"cdpPort": 18801, "headless": false, "executablePath": "/home/<user>/bin/chrome-rec"}}}
+```
+Агент открывает эфир с `profile: "rec"`, а в невидимом профиле параллельно сёрфит.
+Протухший `SingletonLock` от мёртвого pid удалите руками.
+
+**Кроны, которые агент ставит сам, попадают на его же агента и даже в его
+main-сессию** (`payload.kind = systemEvent`) — во время двухчасовой записи бот не
+отвечал бы владельцу. `addons/ops/yoda-cron-guard.py` (шаг 8 смоука) перевешивает всё,
+что не на `background`, в изолированную сессию с announce в Telegram; systemEvent
+конвертирует в `--message`. Коды выхода: 0 чисто, 1 перевесил, 2 не смог.
+
+**`doctor --fix --yes` не чистит аудит-журнал** (`logs/config-audit.jsonl` хранит argv
+с `config set channels.telegram.botToken <токен>`). Штатный редактор можно вызвать
+напрямую из `dist/`:
+```bash
+node --input-type=module -e 'import {m as scrub} from "./io.audit-<hash>.js"; import fs from "node:fs/promises"; import os from "node:os"; console.log(await scrub({fs:{promises:fs},env:process.env,homedir:os.homedir,dryRun:false}))'
+```
+
+**Панель (Control UI) без Tailscale:** `addons/ops/yoda-ui` — ssh-туннель на 18789 +
+URL с токеном из `openclaw dashboard --json --no-open`. Сервер наружу не открывается.

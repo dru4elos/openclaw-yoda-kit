@@ -6,7 +6,7 @@
   webrec.py stop   --out ДИР           # аккуратно завершает ffmpeg, склеивает, проверяет
   webrec.py check  ФАЙЛ.mp4            # длительность, потоки, громкость звука
   webrec.py selftest                    # 12-секундная запись тестовой страницы
-  webrec.py unmute [--port 18800] [--match webinar]   # снять паузу/mute с плееров комнаты
+  webrec.py unmute [--port 18801] [--match webinar]   # снять паузу/mute с плееров комнаты
   webrec.py probe  [--seconds 6]        # есть ли звук в карте ПРЯМО СЕЙЧАС
 
 Пишет сегментами (по умолчанию 10 мин): упавший ffmpeg теряет не всё, а один
@@ -236,9 +236,9 @@ def _screen_busy():
     02.09.2026 селфтест запустили во время живого эфира: его окно легло ПОВЕРХ
     вебинара, агент упал и не убрал его — 47 минут записи ушли на тестовую
     страницу с тоном. Больше селфтест на занятом экране не стартует."""
-    r = _sh(["pgrep", "-u", str(os.getuid()), "-f", "remote-debugging-port=18800"])
+    r = _sh(["pgrep", "-u", str(os.getuid()), "-f", "remote-debugging-port=18801"])
     if r.returncode == 0 and r.stdout.strip():
-        return "на :99 уже работает браузер OpenClaw (порт 18800) — селфтест лёг бы поверх него"
+        return "на :99 уже работает браузер OpenClaw, профиль rec (порт 18801) — селфтест лёг бы поверх него"
     r = _sh(["pgrep", "-u", str(os.getuid()), "-f", "x11grab"])
     if r.returncode == 0 and r.stdout.strip():
         return "идёт запись (ffmpeg x11grab) — селфтест испортил бы её"
@@ -370,7 +370,7 @@ def main():
     se = sub.add_parser("selftest"); se.add_argument("--force", action="store_true")
     pb = sub.add_parser("probe", help="есть ли звук в карте прямо сейчас"); pb.add_argument("--seconds", type=int, default=6)
     um = sub.add_parser("unmute", help="снять паузу/mute с плееров во вкладке эфира")
-    um.add_argument("--port", type=int, default=18800); um.add_argument("--match", default="webinar")
+    um.add_argument("--port", type=int, default=18801); um.add_argument("--match", default="webinar")
     a = ap.parse_args()
     {"start": cmd_start, "status": cmd_status, "stop": cmd_stop, "check": cmd_check,
      "selftest": cmd_selftest, "probe": cmd_probe, "unmute": cmd_unmute}[a.cmd](a)
