@@ -1,5 +1,5 @@
 {
-  "__comment": "Шаблон openclaw.json. Главное здесь: (1) два агента — интерактивный main и урезанный background для фона; (2) модели с явным input, иначе OpenClaw молча выбросит картинку; (3) компактизация safeguard. Токены/ключи — через ${VAR} из .env.",
+  "__comment": "Шаблон openclaw.json для OpenClaw 2026.8.x (2.0), снят с боевого конфига; секреты — через ${VAR} из .env. Главное: (1) два агента — main и урезанный background, каналы привязаны к main через bindings; (2) два профиля браузера: невидимый openclaw и rec на экран :99 для записи (addons/webrec); (3) самообучение скиллов и dreaming памяти выключены, Active Memory и memoryFlush — на дешёвой модели; (4) sessions_search выключен — вместо него addons/skills/recall.",
   "models": {
     "providers": {
       "excash": {
@@ -8,6 +8,35 @@
         "api": "openai-completions",
         "models": [
           {
+            "id": "gemini-3.6-flash",
+            "name": "Gemini 3.6 Flash (excash)",
+            "contextWindow": 1000000,
+            "maxTokens": 65535,
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          {
+            "id": "gemini-3.1-pro",
+            "name": "Gemini 3.1 Pro (excash)",
+            "contextWindow": 1000000,
+            "maxTokens": 65535,
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          {
+            "id": "gpt-5.6-terra",
+            "name": "GPT-5.6 Terra (excash)",
+            "contextWindow": 200000,
+            "maxTokens": 65535,
+            "input": [
+              "text"
+            ]
+          },
+          {
             "id": "gpt-5.6-sol",
             "name": "GPT-5.6 Sol",
             "input": [
@@ -15,33 +44,73 @@
               "image"
             ],
             "maxTokens": 65535,
-            "contextWindow": 200000
+            "contextWindow": 272000
           },
           {
-            "id": "gemini-3.6-flash",
-            "name": "Gemini 3.6 Flash",
+            "id": "gemini-3.7-flash-tiered",
+            "name": "Gemini 3.7 Flash",
             "input": [
               "text",
               "image"
             ],
             "maxTokens": 65535,
-            "contextWindow": 1000000
+            "contextWindow": 550000
           },
           {
-            "id": "gemini-3.1-pro",
-            "name": "Gemini 3.1 Pro",
+            "id": "gpt-5.6-sol-1m",
+            "name": "GPT-5.6 Sol 1M (excash)",
+            "contextWindow": 1000000,
+            "maxTokens": 65535,
             "input": [
               "text",
               "image"
-            ],
+            ]
+          },
+          {
+            "id": "gpt-5.6-sol-1m-fast",
+            "name": "GPT-5.6 Sol 1M Fast (excash)",
+            "contextWindow": 1000000,
             "maxTokens": 65535,
-            "contextWindow": 1000000
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          {
+            "id": "gpt-6-astra-1m",
+            "name": "GPT-6 Astra 1M (excash)",
+            "contextWindow": 1000000,
+            "maxTokens": 65535,
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          {
+            "id": "gpt-6-astra",
+            "name": "GPT-6 Astra (excash)",
+            "contextWindow": 272000,
+            "maxTokens": 65535,
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          {
+            "id": "gemini-3.8-flash",
+            "name": "Gemini 3.8 Flash (excash)",
+            "contextWindow": 1048576,
+            "maxTokens": 65535,
+            "input": [
+              "text",
+              "image"
+            ]
           }
         ]
       },
       "dseek": {
         "baseUrl": "https://api.deepseek.com/v1",
-        "apiKey": "${DEEPSEEK_API_KEY}",
+        "apiKey": "${DSEEK_API_KEY}",
         "api": "openai-completions",
         "models": [
           {
@@ -55,22 +124,23 @@
             "contextWindow": 240000
           },
           {
-            "id": "deepseek-v4-pro",
-            "name": "DeepSeek V4 Pro",
-            "input": [
-              "text"
-            ],
-            "maxTokens": 64000,
-            "contextWindow": 131072
-          },
-          {
             "id": "deepseek-v4-flash",
             "name": "DeepSeek V4 Flash",
+            "contextWindow": 131072,
+            "maxTokens": 64000,
             "input": [
               "text"
-            ],
+            ]
+          },
+          {
+            "id": "deepseek-v4-pro",
+            "name": "DeepSeek V4 Pro",
+            "contextWindow": 131072,
             "maxTokens": 64000,
-            "contextWindow": 131072
+            "reasoning": true,
+            "input": [
+              "text"
+            ]
           }
         ]
       }
@@ -79,47 +149,63 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "excash/gpt-5.6-sol",
+        "primary": "excash/gpt-6-astra-1m",
         "fallbacks": [
-          "excash/gpt-5.6-sol",
+          "excash/gpt-5.6-sol-1m",
+          "excash/gemini-3.8-flash",
+          "excash/gpt-5.6-sol-1m-fast",
           "excash/gemini-3.7-flash-tiered",
-          "excash/gemini-3.6-flash",
-          "dseek/deepseek-v4-pro"
+          "dseek/deepseek-v4-flash-vision-exp"
         ]
       },
       "verboseDefault": "on",
       "thinkingDefault": "adaptive",
       "compaction": {
         "mode": "safeguard",
-        "notifyUser": true,
+        "notifyUser": false,
+        "model": "excash/gemini-3.8-flash",
         "recentTurnsPreserve": 5,
-        "reserveTokens": 20000,
         "memoryFlush": {
-          "enabled": true
+          "enabled": true,
+          "model": "excash/gemini-3.8-flash"
         },
         "midTurnPrecheck": {
           "enabled": true
         },
-        "truncateAfterCompaction": true,
-        "maxActiveTranscriptBytes": "1mb",
-        "maxHistoryShare": 0.35,
-        "keepRecentTokens": 24000,
-        "__comment": "maxActiveTranscriptBytes РАБОТАЕТ только вместе с truncateAfterCompaction. Без автоочистки транскрипт растёт до мегабайт и ответы начинают тормозить."
+        "timeoutSeconds": 600,
+        "maxActiveTranscriptBytes": "8mb",
+        "qualityGuard": {
+          "enabled": true,
+          "maxRetries": 2
+        },
+        "keepRecentTokens": 24000
       },
       "subagents": {
         "maxConcurrent": 8,
         "runTimeoutSeconds": 2700,
-        "maxChildrenPerAgent": 5
+        "maxChildrenPerAgent": 5,
+        "model": "excash/gemini-3.8-flash"
+      },
+      "heartbeat": {
+        "agentId": "main"
+      },
+      "systemAgent": {
+        "agentId": "main"
       }
     },
-    "list": [
-      {
-        "id": "main",
-        "default": true,
-        "name": "Ассистент"
+    "ownership": "explicit",
+    "entries": {
+      "main": {
+        "name": "Ассистент",
+        "tools": {
+          "deny": [
+            "web_search",
+            "sessions_search"
+          ]
+        },
+        "workspace": "/home/openclaw/.openclaw/workspace"
       },
-      {
-        "id": "background",
+      "background": {
         "name": "Ассистент-фон",
         "workspace": "/home/openclaw/.openclaw/workspace-bg",
         "tools": {
@@ -127,43 +213,141 @@
             "message",
             "sessions_spawn",
             "subagents",
-            "browser"
+            "studio__*",
+            "excel__*",
+            "web_search",
+            "sessions_search"
           ]
         },
-        "__comment": "Фоновый агент для heartbeat/кронов: НЕ может слать сообщения и плодить субагентов. Кроны вешать на него: openclaw cron add ... --agent background --session isolated --announce --channel telegram --to <ВАШ_ID>. В workspace-bg положите config/AGENTS-background.example.md, а memory/ и skills/ сделайте симлинками на основной workspace."
+        "__comment": "Фоновый агент для кронов: не шлёт сообщения, не плодит субагентов. Кроны — только на него: openclaw cron add ... --agent background --session isolated --announce --channel telegram --to <ВАШ_ID>; сторож addons/ops/yoda-cron-guard.py перевесит чужие сам. browser разрешён ради записи эфиров (webrec, профиль rec). В workspace-bg положите config/AGENTS-background.example.md."
       }
-    ]
+    }
+  },
+  "bindings": [
+    {
+      "agentId": "main",
+      "match": {
+        "channel": "telegram",
+        "accountId": "*"
+      }
+    },
+    {
+      "agentId": "main",
+      "match": {
+        "channel": "whatsapp",
+        "accountId": "*"
+      }
+    }
+  ],
+  "talk": {
+    "agentId": "main"
+  },
+  "browser": {
+    "enabled": true,
+    "headless": true,
+    "noSandbox": true,
+    "defaultProfile": "openclaw",
+    "profiles": {
+      "openclaw": {
+        "cdpPort": 18800,
+        "headless": true,
+        "executablePath": "/opt/chrome-full/chrome-linux64/chrome"
+      },
+      "rec": {
+        "cdpPort": 18801,
+        "headless": false,
+        "executablePath": "/home/openclaw/bin/chrome-rec",
+        "__comment": "Полный Chrome через обёртку addons/webrec/chrome-rec: рисует в Xvfb :99, звук в null-sink. Без явного executablePath профиль по умолчанию берёт snap-хромиум, и AppArmor его валит."
+      }
+    }
+  },
+  "skills": {
+    "workshop": {
+      "autonomous": {
+        "mode": "off"
+      }
+    }
+  },
+  "plugins": {
+    "allow": [
+      "deepseek",
+      "whatsapp",
+      "memory-core",
+      "telegram",
+      "browser",
+      "active-memory",
+      "groq",
+      "slack"
+    ],
+    "entries": {
+      "deepseek": {
+        "enabled": true
+      },
+      "whatsapp": {
+        "enabled": true
+      },
+      "memory-core": {
+        "enabled": true,
+        "config": {
+          "dreaming": {
+            "enabled": false
+          }
+        }
+      },
+      "active-memory": {
+        "enabled": true,
+        "config": {
+          "model": "excash/gemini-3.8-flash",
+          "agents": [
+            "main"
+          ]
+        }
+      },
+      "telegram": {
+        "enabled": true
+      },
+      "groq": {
+        "enabled": true
+      },
+      "slack": {
+        "enabled": true
+      }
+    }
   },
   "tools": {
     "media": {
-      "image": {
-        "enabled": true,
-        "timeoutSeconds": 300,
-        "maxBytes": 26214400,
-        "models": [
-          {
-            "provider": "dseek",
-            "model": "deepseek-v4-flash-vision-exp"
-          }
-        ]
-      },
       "audio": {
         "enabled": true,
         "echoTranscript": true,
         "language": "ru",
         "timeoutSeconds": 300,
-        "maxBytes": 26214400,
-        "models": [
-          {
-            "type": "cli",
-            "command": "/home/openclaw/mailvenv/bin/python",
-            "args": [
-              "/home/openclaw/.openclaw/transcribe.py",
-              "{{MediaPath}}"
-            ]
-          }
-        ]
-      }
+        "maxBytes": 26214400
+      },
+      "image": {
+        "enabled": true,
+        "timeoutSeconds": 300,
+        "maxBytes": 26214400
+      },
+      "models": [
+        {
+          "provider": "dseek",
+          "model": "deepseek-v4-flash-vision-exp",
+          "capabilities": [
+            "image"
+          ]
+        },
+        {
+          "type": "cli",
+          "command": "/home/openclaw/mailvenv/bin/python",
+          "args": [
+            "/home/openclaw/.openclaw/transcribe.py",
+            "{{MediaPath}}"
+          ],
+          "capabilities": [
+            "audio"
+          ]
+        }
+      ]
     },
     "web": {
       "fetch": {
@@ -234,7 +418,8 @@
     "telegram": {
       "enabled": true,
       "botToken": "ВАШ_ТОКЕН_ОТ_BOTFATHER",
-      "dmPolicy": "pairing"
+      "dmPolicy": "pairing",
+      "richMessages": true
     }
   }
 }
