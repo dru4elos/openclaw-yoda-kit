@@ -15,6 +15,7 @@
 import argparse
 import glob
 import os
+import time
 import re
 import shutil
 import subprocess
@@ -100,7 +101,8 @@ def synth_edge(text, lang):
 
 
 def to_ogg(src):
-    ogg = tempfile.mktemp(suffix=".ogg")
+    # /tmp/voice-<время>.ogg: модель путала "/tmp/tmpXXXX.ogg" и писала "/tmp6n7l…" — голосовое не уходило
+    ogg = f"/tmp/voice-{int(time.time())}-{os.getpid()}.ogg"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-c:a", "libopus", "-b:a", "48k",
                     "-ac", "1", ogg], check=True, timeout=300)
     os.remove(src)
