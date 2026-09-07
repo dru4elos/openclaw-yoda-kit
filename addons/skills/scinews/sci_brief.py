@@ -410,7 +410,7 @@ def build_docx(brief, path):
 
     # колонтитулы
     hp = sec.header.paragraphs[0]; hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    hr = hp.add_run(f"Научный бриф · {brief['date_ru']} · Йода для доктора Семенова"); hr.font.size = Pt(8.5); hr.font.color.rgb = RGBColor.from_string(GREY)
+    hr = hp.add_run(f"Научный бриф · {brief['date_ru']} · ассистент для владельца"); hr.font.size = Pt(8.5); hr.font.color.rgb = RGBColor.from_string(GREY)
     fp = sec.footer.paragraphs[0]; fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
     fr = fp.add_run("Стр. "); fr.font.size = Pt(8.5); fr.font.color.rgb = RGBColor.from_string(GREY)
     fld = OxmlElement("w:fldSimple"); fld.set(qn("w:instr"), "PAGE"); r_ = OxmlElement("w:r"); t_ = OxmlElement("w:t"); t_.text = "1"; r_.append(t_); fld.append(r_); fp._p.append(fld)
