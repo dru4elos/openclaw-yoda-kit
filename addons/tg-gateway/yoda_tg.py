@@ -126,7 +126,7 @@ def _sum_llm(text, folders):
     try:
         r = requests.post(u.rstrip("/") + "/chat/completions",
                           headers={"Authorization": "Bearer " + k, "Content-Type": "application/json"},
-                          json={"model": "gemini-3.1-pro", "max_tokens": 8000, "temperature": 0.3,
+                          json={"model": "gemini-3.8-flash", "max_tokens": 8000, "temperature": 0.3,
                                 "messages": [{"role": "user",
                                               "content": prompt + "\n\n=== ПОСТЫ ===\n" + text[:250000]}]},
                           timeout=600)
@@ -208,7 +208,7 @@ _OWNER_NAME = "имя владельца"  # как к нему обращают
 
 def _bot_copy(target, text):
     """Копия доктору голосом БОТА о каждой отправке с его личного аккаунта.
-    Неотключаемая подотчётность после инцидента 07.08 (автоответ Наталье Карловой)."""
+    Неотключаемая подотчётность после инцидента 07.08 (автоответ живому человеку)."""
     try:
         import json as _j, re as _re, urllib.request as _u
         cfg = open("/home/openclaw/.openclaw/openclaw.json", encoding="utf-8").read()
@@ -231,7 +231,7 @@ _NOISE = ("telegram", "notifications", "spambot", "bot", "канал", "channel"
           "vip сигналы", "сигналы", "reminders", "яндекс", "ozon", "wildberries",
           "сбер", "тинькофф", "т-банк", "госуслуги", "delivery", "доставка",
           # собственные сервисы доктора — они уведомляют, а не ждут ответа
-          "йода", "докмед", "свойврач", "доктор семенов", "симулейтив",
+          "йода", "докмед", "свойврач", "имя своего бота", "симулейтив",
           "избранное", "saved messages")
 
 # Маркеры обещаний в СВОИХ сообщениях
@@ -454,8 +454,10 @@ def _classify_debts(items):
             txt = txt.split("```")[1]
             txt = txt[4:] if txt.lower().startswith("json") else txt
         i, jx = txt.find("["), txt.rfind("]")
+        if not txt:
+            raise ValueError("пустой ответ")
         if i == -1:
-            return {}
+            raise ValueError("в ответе нет JSON")
         chunk = txt[i:jx + 1] if jx > i else txt[i:] + "]"   # добираем обрезанный хвост
         arr = _j.loads(chunk)
         out = {}
@@ -475,7 +477,7 @@ def _classify_debts(items):
     ex_key, ex_url = _llm_env("EXCASH_API_KEY"), _llm_env("EXCASH_API_URL")
     if ex_key and ex_url:
         attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key,
-                         "gemini-3.7-flash-tiered"))
+                         "gemini-3.8-flash"))
     acc = {}
     for url, api_key, model in attempts:
         try:
@@ -796,12 +798,17 @@ def _extract_promises(items):
     import urllib.request as _u
     key = _llm_env("DEEPSEEK_API_KEY")
     if not key:
-        return {}
+        return {}, set()
     if len(items) > 3:
-        out = {}
+        out, done = {}, set()
         for i in range(0, len(items), 3):
-            out.update(_extract_promises(items[i:i + 3]))
-        return out
+            got, dn = _extract_promises(items[i:i + 3])
+            out.update(got)
+            done |= dn
+        if len(done) < len(items):
+            print("(разбор обещаний: %d фраз из %d не разобраны — останутся на следующий проход)"
+                  % (len(items) - len(done), len(items)), file=sys.stderr)
+        return out, done
     blob = "\n\n".join(
         "### ЧАТ %d | %s\nПЕРЕПИСКА:\n%s\nПОСЛЕДНЯЯ ФРАЗА ВРАЧА: %s"
         % (i + 1, name, ctx[:900], mine[:400])
@@ -845,8 +852,10 @@ def _extract_promises(items):
             txt = txt.split("```")[1]
             txt = txt[4:] if txt.lower().startswith("json") else txt
         i, jx = txt.find("["), txt.rfind("]")
+        if not txt:
+            raise ValueError("пустой ответ")
         if i == -1:
-            return {}
+            raise ValueError("в ответе нет JSON")
         arr = _j.loads(txt[i:jx + 1] if jx > i else txt[i:] + "]")
         out = {}
         for x in arr:
@@ -864,18 +873,18 @@ def _extract_promises(items):
     ex_key, ex_url = _llm_env("EXCASH_API_KEY"), _llm_env("EXCASH_API_URL")
     if ex_key and ex_url:
         attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key,
-                         "gemini-3.7-flash-tiered"))
+                         "gemini-3.8-flash"))
+        attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key,
+                         "gpt-5.6-sol-1m"))
     attempts.append(("https://api.deepseek.com/chat/completions", key, "deepseek-v4-flash"))
+    keys = {k for k, _n, _c, _m in items}
     for url, api_key, model in attempts:
         try:
-            got = _try(url, api_key, model)
-            if got:
-                return got
-            print("(разбор обещаний %s: пустой ответ — пробую резерв)" % model, file=sys.stderr)
+            return _try(url, api_key, model), keys      # {} = модель честно сказала «обещаний нет»
         except Exception as e:
-            print("(разбор обещаний %s: %s — пробую резерв)" % (model, type(e).__name__),
-                  file=sys.stderr)
-    return {}
+            print("(разбор обещаний %s: %s %s — пробую резерв)"
+                  % (model, type(e).__name__, str(e)[:80]), file=sys.stderr)
+    return {}, set()                                      # все модели отказали
 
 
 def _make_reminder(name, when_dt, text, key):
@@ -929,8 +938,8 @@ def cmd_promises(a):
             when = None
         if when and when < cutoff:
             continue
-        msgs = gw("/read", params={"chat": str(dl["id"]), "limit": 10}).get("messages") or []
-        for m in msgs:
+        msgs = gw("/read", params={"chat": str(dl["id"]), "limit": 40}).get("messages") or []
+        for i, m in enumerate(msgs):
             if not m.get("out"):
                 continue
             try:
@@ -940,7 +949,7 @@ def cmd_promises(a):
             if not mt or mt < cutoff:
                 continue
             txt = (m.get("text") or "").strip()
-            if len(txt) < 6 or not any(h in txt.lower() for h in _SELF_HINT):
+            if len(txt) < 6 or txt.startswith(("http", "/")):
                 continue
             key = "%s:%s" % (dl["id"], m.get("id") or mt.isoformat())
             if key in state:
@@ -948,15 +957,22 @@ def cmd_promises(a):
             ctx = "\n".join(
                 ("ВРАЧ" if x.get("out") else (x.get("sender") or dl["name"])[:20]) + ": "
                 + (x.get("text") or x.get("caption") or "[медиа]").replace("\n", " ")[:180]
-                for x in msgs[::-1])
+                for x in msgs[max(0, i - 2): i + 7][::-1])
             cand.append((key, dl["name"], ctx, txt, mt))
 
     if not cand:
         print("За %d ч обещаний не нашлось." % a.hours)
         return
 
-    found = _extract_promises([(k, n, c, t) for k, n, c, t, _ in cand])
+    found, done = _extract_promises([(k, n, c, t) for k, n, c, t, _ in cand])
     by_key = {k: (n, t, mt) for k, n, _c, t, mt in cand}
+    if not done:
+        print("⚠️ РАЗБОР ОБЕЩАНИЙ НЕ УДАЛСЯ: все модели молчат. Фраз в очереди: %d — "
+              "останутся на следующий проход." % len(cand))
+        sys.exit(2)
+    for k, n, _c, _t, _mt in cand:                 # не обещание — больше не переспрашивать
+        if k in done and k not in found and not a.dry:
+            state[k] = {"what": "", "chat": n, "made": False, "note": "не обещание"}
 
     # Одно и то же обещание часто повторяется в чате несколько раз («напомните
     # завтра», потом «поставлю напоминалку»). Оставляем самое свежее упоминание.
@@ -1012,9 +1028,10 @@ def cmd_promises(a):
     if not a.dry:
         _promise_save(state)
 
-    print("Просмотрено фраз: %d, обещаний: %d%s" % (
+    print("Просмотрено фраз: %d, обещаний: %d%s%s" % (
         len(cand), len(found),
-        (", свёрнуто дублей: %d" % len(dropped)) if dropped else ""))
+        (", свёрнуто дублей: %d" % len(dropped)) if dropped else "",
+        (", НЕ разобрано: %d" % (len(cand) - len(done))) if len(done) < len(cand) else ""))
     for when, title, note in sorted(made):
         print("  ✓ %s — %s" % (when.strftime("%d.%m %H:%M"), title))
     for when, title, note in sorted(skipped):
