@@ -32,7 +32,7 @@ if os.path.exists(_p):
             k, v = line.split("=", 1)
             ENV[k.strip()] = v.strip().strip('"').strip("'")
 
-UNPAYWALL_EMAIL = ENV.get("UNPAYWALL_EMAIL", "dru4elos@gmail.com")
+UNPAYWALL_EMAIL = ENV.get("UNPAYWALL_EMAIL", "you@example.com")
 
 # ---------- LLM: excash gemini-3.1-pro -> резерв DeepSeek V4 Pro ----------
 def _llm_once(base_url, key, model, messages, max_tokens, temperature, timeout=600):
@@ -657,4 +657,6 @@ def main():
     else:
         make_word(a.query, pmid=a.pmid, doi=a.doi, send=a.send)
 
-main()
+
+if __name__ == "__main__":
+    main()
