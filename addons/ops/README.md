@@ -22,3 +22,7 @@ cp yoda-smoke.sh /usr/local/bin/ && chmod +x /usr/local/bin/yoda-smoke.sh
 `yoda_backup.sh` тянет rsync'ом конфиг, workspace (память!), скрипты и сессию
 tg-шлюза; хранит датированные hardlink-снапшоты с ротацией. `*.plist` — launchd
 на каждый день (поправьте пути /Users/YOURNAME и ssh-алиас сервера).
+
+## yoda-models и excash_watch — когда провайдер отвергает ключ
+`yoda-models excash|deepseek` переключает модели обоих экземпляров (основная/резервы, subagents, compaction, memoryFlush, active-memory) и пины кронов, валидирует и перезапускает гейтвеи. Урок 07.09: агрегатор ответил 401 на ключ, OpenClaw и остальные сервисы продолжали пробовать → провайдер забанил IP (429 auth_fail_throttled) даже для валидных запросов; пока провайдер лежит, в цепочке не должно быть ни одной его модели. `excash_watch.sh` (root cron */30) сообщает владельцу через tome, когда `/models` снова 200.
+Ещё урок: SKILL.md без frontmatter (`name`, `description`) гейтвей 2.0 молча пропускает («Skipping invalid skill») — скилл невидим агенту.

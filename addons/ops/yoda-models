@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""yoda-models excash|deepseek [--no-restart] — переключить модели ОБОИХ Йод (openclaw, yoda2) и пины кронов.
+excash: основная gpt-6-astra-1m, резервы sol-1m → gemini-3.8-flash → deepseek; дешёвое — gemini-3.8-flash.
+deepseek: только DeepSeek (когда excash лежит/ключ отозван) — ничего из excash в цепочке, чтобы не ловить бан IP."""
+import json, os, pwd, subprocess, sys, time
+
+PROFILES = {
+    "excash": {"primary": "excash/gpt-6-astra-1m",
+               "fallbacks": ["excash/gpt-5.6-sol-1m", "excash/gemini-3.8-flash", "excash/gpt-5.6-sol-1m-fast",
+                             "excash/gemini-3.7-flash-tiered", "dseek/deepseek-v4-flash-vision-exp"],
+               "cheap": "excash/gemini-3.8-flash", "brief": "excash/gpt-6-astra-1m"},
+    "deepseek": {"primary": "dseek/deepseek-v4-pro", "fallbacks": ["dseek/deepseek-v4-flash-vision-exp"],
+                 "cheap": "dseek/deepseek-v4-flash-vision-exp", "brief": "dseek/deepseek-v4-pro"},
+}
+CRON_PINS = {"openclaw": {"2525b38a-86e4-4183-8629-a6867c1e9a1c": "brief", "f6b3848c-6a01-45b5-bf43-ef253a113528": "cheap"}}
+
+
+def run_as(user, cmd):
+    return subprocess.run(["su", "-", user, "-c", "source ~/.nvm/nvm.sh >/dev/null 2>&1; " + cmd],
+                          capture_output=True, text=True, timeout=300)
+
+
+def patch(user, prof):
+    home = pwd.getpwnam(user).pw_dir
+    c = f"{home}/.openclaw/openclaw.json"
+    cfg = json.load(open(c, encoding="utf-8"))
+    os.replace(c, f"{c}.pre-models.{int(time.time())}") if False else None
+    open(f"{c}.pre-models.{int(time.time())}", "w", encoding="utf-8").write(json.dumps(cfg, ensure_ascii=False, indent=2))
+    d = cfg["agents"]["defaults"]
+    d["model"] = {"primary": prof["primary"], "fallbacks": prof["fallbacks"]}
+    for k in ("subagents", "compaction"):
+        if isinstance(d.get(k), dict) and "model" in d[k]:
+            d[k]["model"] = prof["cheap"]
+    if isinstance(d.get("compaction", {}).get("memoryFlush"), dict) and "model" in d["compaction"]["memoryFlush"]:
+        d["compaction"]["memoryFlush"]["model"] = prof["cheap"]
+    am = cfg.get("plugins", {}).get("entries", {}).get("active-memory", {}).get("config", {})
+    if "model" in am:
+        am["model"] = prof["cheap"]
+    json.dump(cfg, open(c, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    uid, gid = pwd.getpwnam(user).pw_uid, pwd.getpwnam(user).pw_gid
+    os.chown(c, uid, gid)
+    r = run_as(user, "openclaw config validate 2>&1 | tail -1")
+    print(f"  {user}: {prof['primary']} | {r.stdout.strip()}")
+    if "valid" not in r.stdout.lower():
+        sys.exit(f"!! конфиг {user} невалиден — рестарта не будет")
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] not in PROFILES:
+        sys.exit(__doc__)
+    prof = PROFILES[sys.argv[1]]
+    for user in ("openclaw", "yoda2"):
+        patch(user, prof)
+        for jid, kind in CRON_PINS.get(user, {}).items():
+            r = run_as(user, f"openclaw cron edit {jid} --model {prof[kind]} 2>&1 | tail -1")
+            print(f"  крон {jid[:8]} → {prof[kind]}: {'ok' if r.returncode == 0 else r.stdout[-100:]}")
+    if "--no-restart" in sys.argv:
+        return
+    for user in ("openclaw", "yoda2"):
+        subprocess.run(["su", "-", user, "-c", "XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart openclaw-gateway"])
+    for _ in range(40):
+        time.sleep(3)
+        s = subprocess.run(["ss", "-ltn"], capture_output=True, text=True).stdout
+        if ":18789 " in s and ":18790 " in s:
+            break
+    print("  гейтвеи перезапущены, порты слушают:", ":18789 " in s, ":18790 " in s)
+
+
+if __name__ == "__main__":
+    main()
