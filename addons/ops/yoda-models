@@ -13,7 +13,7 @@ PROFILES = {
     "deepseek": {"primary": "dseek/deepseek-v4-pro", "fallbacks": ["dseek/deepseek-v4-flash-vision-exp"],
                  "cheap": "dseek/deepseek-v4-flash-vision-exp", "brief": "dseek/deepseek-v4-pro"},
 }
-CRON_PINS = {"openclaw": {"2525b38a-86e4-4183-8629-a6867c1e9a1c": "brief", "f6b3848c-6a01-45b5-bf43-ef253a113528": "cheap"}}
+CRON_PINS = {"openclaw": {"Утренний брифинг": "brief", "Вечерний дайджест": "cheap"}}   # по началу имени крона
 
 
 def run_as(user, cmd):
@@ -52,9 +52,18 @@ def main():
     prof = PROFILES[sys.argv[1]]
     for user in ("openclaw", "yoda2"):
         patch(user, prof)
-        for jid, kind in CRON_PINS.get(user, {}).items():
-            r = run_as(user, f"openclaw cron edit {jid} --model {prof[kind]} 2>&1 | tail -1")
-            print(f"  крон {jid[:8]} → {prof[kind]}: {'ok' if r.returncode == 0 else r.stdout[-100:]}")
+        pins = CRON_PINS.get(user, {})
+        if pins:
+            lst = run_as(user, "openclaw cron list --json 2>/dev/null").stdout
+            try:
+                jobs = json.loads(lst); jobs = jobs if isinstance(jobs, list) else jobs.get("jobs", [])
+            except Exception:
+                jobs = []
+            for j in jobs:
+                for prefix, kind in pins.items():
+                    if str(j.get("name", "")).startswith(prefix):
+                        r = run_as(user, f"openclaw cron edit {j['id']} --model {prof[kind]} 2>&1 | tail -1")
+                        print(f"  крон «{j['name'][:22]}» → {prof[kind]}: {'ok' if r.returncode == 0 else r.stdout[-100:]}")
     if "--no-restart" in sys.argv:
         return
     for user in ("openclaw", "yoda2"):
