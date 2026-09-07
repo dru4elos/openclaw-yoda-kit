@@ -25,3 +25,6 @@
 
 ## say — голос (piper, локально)
 Русский `ru_RU-dmitri-medium` и итальянский `it_IT-paola-medium` в `/opt/piper-voices` (скачать с huggingface.co/rhasspy/piper-voices; с сервера HF может не отдавать — качайте на рабочей машине и scp). `pip install piper-tts==1.6.0` в venv бота. `--lang ru|it|auto`, резерв edge-tts. Кому слать — `OWNER_TG_ID` в `.env`. Встроенный `tts` OpenClaw при этом лучше запретить в `tools.deny`.
+
+## docs — читать и проверять документы (docx/pptx/xlsx/pdf)
+`read`, `check` (картинки внутри docx/pptx зрением), `preview` (LibreOffice → PDF → PNG в `workspace/media/preview/`, описание зрением через общий `vision.py`). ⚠️ Для pptx/xlsx нужны пакеты `libreoffice-impress` и `libreoffice-calc` — с одним `libreoffice-writer` Impress-файлы «source file could not be loaded». `view_image` OpenClaw видит только `~/.openclaw` и workspace агента — PNG в /tmp он не откроет.
