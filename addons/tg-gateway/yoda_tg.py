@@ -29,17 +29,34 @@ MEDIA_DIR = "/tmp"
 
 
 def gw(path, method="GET", **kw):
-    """Запрос к шлюзу. Понятная ошибка вместо стектрейса телетона."""
-    try:
-        r = (requests.post(GW + path, json=kw.get("json") or {}, timeout=kw.get("timeout", 300))
-             if method == "POST" else
-             requests.get(GW + path, params=kw.get("params") or {}, timeout=kw.get("timeout", 300)))
-        r.raise_for_status()
-        return r.json()
-    except requests.HTTPError as e:
-        sys.exit(f"шлюз ответил {e.response.status_code}: {e.response.text[:200]}")
-    except Exception as e:
-        sys.exit(f"шлюз недоступен ({type(e).__name__}). Проверь: systemctl status tg-gateway")
+    """Запрос к шлюзу. Понятная ошибка вместо стектрейса телетона.
+
+    Шлюз временами теряет связь с Telegram (Host unreachable → 500) на десятки секунд —
+    поэтому 5xx и обрывы пробуем ещё дважды с паузой, а не роняем всю команду."""
+    import time as _t
+    last = ""
+    for attempt in (1, 2, 3):
+        try:
+            r = (requests.post(GW + path, json=kw.get("json") or {}, timeout=kw.get("timeout", 300))
+                 if method == "POST" else
+                 requests.get(GW + path, params=kw.get("params") or {}, timeout=kw.get("timeout", 300)))
+            if r.status_code >= 500 and attempt < 3:
+                last = f"шлюз ответил {r.status_code}: {r.text[:200]}"
+                print(f"({last} — повтор через 20 с)", file=sys.stderr)
+                _t.sleep(20)
+                continue
+            r.raise_for_status()
+            return r.json()
+        except requests.HTTPError as e:
+            sys.exit(f"шлюз ответил {e.response.status_code}: {e.response.text[:200]}")
+        except Exception as e:
+            last = f"шлюз недоступен ({type(e).__name__})"
+            if attempt < 3:
+                print(f"({last} — повтор через 20 с)", file=sys.stderr)
+                _t.sleep(20)
+                continue
+            sys.exit(f"{last}. Проверь: systemctl status tg-gateway")
+    sys.exit(last)
 
 
 def _when(iso, fmt="%d.%m %H:%M"):
