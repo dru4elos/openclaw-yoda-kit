@@ -86,7 +86,13 @@ def cmd_read(a):
         body = (m.get("text") or "").replace("\n", " ")
         if not body and m.get("has_media"):
             body = "[медиа]"
-        lines.append(f"[{_when(m.get('date'))}] {who}: {body[:400]}")
+        extra = ""
+        for b in (m.get("buttons") or []):
+            extra += "\n      🔘 " + (b.get("text") or "кнопка") + ((" → " + b["url"]) if b.get("url") else " (callback, без ссылки)")
+        for u in (m.get("links") or []):
+            if u not in body:
+                extra += "\n      🔗 " + u
+        lines.append(f"[{_when(m.get('date'))}] {who}: {body[:400]}{extra}")
     for line in reversed(lines):
         print(line)
 
