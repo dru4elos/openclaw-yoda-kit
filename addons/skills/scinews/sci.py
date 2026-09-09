@@ -43,15 +43,30 @@ def _llm_once(base_url, key, model, messages, max_tokens, temperature, timeout=6
     r.raise_for_status()
     return ((r.json().get("choices", [{}])[0].get("message", {}) or {}).get("content", "")) or ""
 
-def llm(messages, max_tokens=20000, temperature=0.35):
-    key, url = ENV.get("EXCASH_API_KEY"), ENV.get("EXCASH_API_URL")
-    if key and url:
-        try:
-            txt = _llm_once(url, key, "gemini-3.1-pro", messages, max_tokens, temperature)
-            if txt.strip():
-                return txt
-        except Exception as e:
-            sys.stderr.write(f"excash недоступен -> DeepSeek V4 Pro: {e}\n")
+GUARD_URL = ENV.get("EXCASH_GUARD_URL", "http://127.0.0.1:8788")   # CDN excash режет прямые тела >10 КБ; страж пропускает
+
+
+def excash_bases():
+    """Адреса excash по порядку: страж-прокси OpenClaw, затем прямой."""
+    out = [GUARD_URL.rstrip("/")] if GUARD_URL else []
+    u = (ENV.get("EXCASH_API_URL") or "").rstrip("/")
+    if u and u not in out:
+        out.append(u)
+    return out
+
+
+def llm(messages, max_tokens=20000, temperature=0.35, models=("gemini-3.8-flash", "gpt-5.6-sol-1m", "gpt-6-astra-1m")):
+    key = ENV.get("EXCASH_API_KEY")
+    if key and excash_bases():
+        for model in models:
+            for base in excash_bases():
+                try:
+                    txt = _llm_once(base, key, model, messages, max_tokens, temperature)
+                    if txt.strip():
+                        return txt
+                except Exception as e:
+                    sys.stderr.write(f"excash {model} через {base.split('//')[-1][:20]}: {str(e)[:80]}\n")
+        sys.stderr.write("excash недоступен -> DeepSeek\n")
     dk = ENV.get("DEEPSEEK_API_KEY")
     if dk:
         # резерв: deepseek-v4-flash-vision-exp — быстрый (1с) и мультимодальный

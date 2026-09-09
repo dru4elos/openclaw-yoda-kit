@@ -393,6 +393,21 @@ def cmd_dismissed(a):
         print(f"  • {nm} — {how}   (снять: dismiss \"{nm}\" --days 0)")
 
 
+_GUARD_OK = None
+
+
+def _excash_url(direct):
+    """Страж-прокси OpenClaw первым: BunnyCDN перед excash режет прямые тела >10 КБ (400 HTML)."""
+    global _GUARD_OK
+    if _GUARD_OK is None:
+        try:
+            import urllib.request as _u
+            _GUARD_OK = _u.urlopen("http://127.0.0.1:8788/health", timeout=3).status == 200
+        except Exception:
+            _GUARD_OK = False
+    return "http://127.0.0.1:8788" if _GUARD_OK else direct
+
+
 def _llm_env(name):
     """Ключи лежат у openclaw — скрипт ходит от root через sudo."""
     try:
@@ -497,7 +512,7 @@ def _classify_debts(items):
         return out
 
     attempts = [("https://api.deepseek.com/chat/completions", key, "deepseek-v4-flash")]
-    ex_key, ex_url = _llm_env("EXCASH_API_KEY"), _llm_env("EXCASH_API_URL")
+    ex_key, ex_url = _llm_env("EXCASH_API_KEY"), _excash_url(_llm_env("EXCASH_API_URL"))
     if ex_key and ex_url:
         attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key,
                          "gemini-3.8-flash"))
@@ -893,7 +908,7 @@ def _extract_promises(items):
     # Gemini первым: deepseek на этой задаче уходит в многотысячные рассуждения,
     # медленно и упирается в лимит. Он остаётся резервом.
     attempts = []
-    ex_key, ex_url = _llm_env("EXCASH_API_KEY"), _llm_env("EXCASH_API_URL")
+    ex_key, ex_url = _llm_env("EXCASH_API_KEY"), _excash_url(_llm_env("EXCASH_API_URL"))
     if ex_key and ex_url:
         attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key,
                          "gemini-3.8-flash"))

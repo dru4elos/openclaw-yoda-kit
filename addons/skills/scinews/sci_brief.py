@@ -52,20 +52,24 @@ def log(msg):
 
 # ---------- LLM ----------
 def ask(prompt, max_tokens=8000, temperature=0.2):
-    key, url = sci.ENV.get("EXCASH_API_KEY"), sci.ENV.get("EXCASH_API_URL")
+    key = sci.ENV.get("EXCASH_API_KEY")
+    bases = sci.excash_bases() if hasattr(sci, "excash_bases") else [sci.ENV.get("EXCASH_API_URL", "")]
     last = ""
-    if key and url:
+    if key and bases:
         for model in MODELS:
-            for attempt in (1, 2):
-                try:
-                    txt = sci._llm_once(url, key, model, [{"role": "user", "content": prompt}],
-                                        max_tokens, temperature, timeout=300)
-                    if txt.strip():
-                        return txt
-                    last = f"{model}: пустой ответ"
-                except Exception as e:
-                    last = f"{model}: {type(e).__name__} {str(e)[:80]}"
-                time.sleep(3 * attempt)
+            for base in bases:                      # страж-прокси первым: CDN excash режет прямые тела >10 КБ
+                for attempt in (1, 2):
+                    try:
+                        txt = sci._llm_once(base, key, model, [{"role": "user", "content": prompt}],
+                                            max_tokens, temperature, timeout=300)
+                        if txt.strip():
+                            return txt
+                        last = f"{model}: пустой ответ"
+                    except Exception as e:
+                        last = f"{model}@{base.split('//')[-1][:20]}: {type(e).__name__} {str(e)[:60]}"
+                        if "400" in str(e) or "404" in str(e) or "413" in str(e):
+                            break
+                    time.sleep(3 * attempt)
     dk = sci.ENV.get("DEEPSEEK_API_KEY")
     if dk:
         try:
@@ -410,7 +414,7 @@ def build_docx(brief, path):
 
     # колонтитулы
     hp = sec.header.paragraphs[0]; hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    hr = hp.add_run(f"Научный бриф · {brief['date_ru']} · ассистент для владельца"); hr.font.size = Pt(8.5); hr.font.color.rgb = RGBColor.from_string(GREY)
+    hr = hp.add_run(f"Научный бриф · {brief['date_ru']} · Йода для доктора Семенова"); hr.font.size = Pt(8.5); hr.font.color.rgb = RGBColor.from_string(GREY)
     fp = sec.footer.paragraphs[0]; fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
     fr = fp.add_run("Стр. "); fr.font.size = Pt(8.5); fr.font.color.rgb = RGBColor.from_string(GREY)
     fld = OxmlElement("w:fldSimple"); fld.set(qn("w:instr"), "PAGE"); r_ = OxmlElement("w:r"); t_ = OxmlElement("w:t"); t_.text = "1"; r_.append(t_); fld.append(r_); fp._p.append(fld)

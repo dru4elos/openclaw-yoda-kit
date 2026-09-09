@@ -145,30 +145,63 @@ def tg_doc(path, caption=""):
     return r.ok
 
 
+GUARD_URL = E.get("EXCASH_GUARD_URL", "http://127.0.0.1:8788")   # страж-прокси OpenClaw: CDN excash режет прямые тела >10 КБ
+
+
+def _excash_bases():
+    """Сначала страж (через него проходят большие запросы), потом прямой адрес — как запасной."""
+    bases = []
+    if GUARD_URL:
+        bases.append(GUARD_URL.rstrip("/"))
+    if EXCASH_URL and EXCASH_URL not in bases:
+        bases.append(EXCASH_URL)
+    return bases
+
+
 def llm(models, messages, max_tokens, temperature=0.2, timeout=900):
     """Первая живая модель из списка; пустой ответ = ошибка (агрегатор так «падает»)."""
     if not (EXCASH_URL and EXCASH_KEY):
         raise RuntimeError("нет EXCASH_API_URL/EXCASH_API_KEY в ~/.openclaw/.env")
     last = ""
     for model in models:
-        for attempt in (1, 2):
-            try:
-                r = requests.post(f"{EXCASH_URL}/chat/completions",
-                                  headers={"Authorization": f"Bearer {EXCASH_KEY}"},
-                                  json={"model": model, "messages": messages, "temperature": temperature,
-                                        "max_tokens": max_tokens, "stream": False}, timeout=timeout)
-                if r.status_code != 200:
-                    last = f"{model}: HTTP {r.status_code} {r.text[:120]}"
+        for base in _excash_bases():
+            for attempt in (1, 2):
+                try:
+                    stream = max_tokens > 8000     # длинная генерация без потока ловит 504 на границе провайдера
+                    r = requests.post(f"{base}/chat/completions",
+                                      headers={"Authorization": f"Bearer {EXCASH_KEY}"},
+                                      json={"model": model, "messages": messages, "temperature": temperature,
+                                            "max_tokens": max_tokens, "stream": stream}, timeout=timeout, stream=stream)
+                    if r.status_code != 200:
+                        last = f"{model}@{base.split('//')[-1][:22]}: HTTP {r.status_code} {r.text[:80]}"
+                        if r.status_code in (400, 404, 413):
+                            break                    # этот путь не примет — пробуем другой адрес
+                        time.sleep(5 * attempt)
+                        continue
+                    if stream:
+                        parts = []
+                        for line in r.iter_lines(decode_unicode=True):
+                            if not line or not line.startswith("data:"):
+                                continue
+                            payload = line[5:].strip()
+                            if payload == "[DONE]":
+                                break
+                            try:
+                                delta = ((json.loads(payload).get("choices") or [{}])[0].get("delta") or {}).get("content")
+                            except Exception:
+                                continue
+                            if delta:
+                                parts.append(delta)
+                        text = "".join(parts)
+                    else:
+                        d = r.json()
+                        text = ((d.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+                    if text.strip():
+                        return text.strip(), model
+                    last = f"{model}: пустой ответ"
+                except Exception as ex:
+                    last = f"{model}@{base.split('//')[-1][:22]}: {type(ex).__name__}"
                     time.sleep(5 * attempt)
-                    continue
-                d = r.json()
-                text = ((d.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-                if text.strip():
-                    return text.strip(), model
-                last = f"{model}: пустой ответ"
-            except Exception as ex:
-                last = f"{model}: {ex}"
-            time.sleep(5 * attempt)
     raise RuntimeError("все модели отказали: " + last)
 
 
@@ -344,7 +377,7 @@ def stage_summarize(out, title, focus=""):
             f"без потерь содержания и без повторов:\n\nЧАСТЬ 1:\n{partial[0]}\n\nЧАСТЬ 2:\n{partial[1]}"}], max_tokens=32000)
     else:
         summary, model = llm(SUM_MODELS, [{"role": "user", "content": SUM_PROMPT.format(
-            title=title, reader=READER, focus=foc, text=body)}], max_tokens=32000)
+            title=title, reader=READER, focus=foc, text=body)}], max_tokens=24000)
     with open(os.path.join(out, "summary.md"), "w", encoding="utf-8") as fh:
         fh.write(f"# Конспект: {title}\n\n_Составлен по стенограмме GigaAM v3, модель {model}. Файлы: {out}_\n\n{summary}\n")
     log(out, f"конспект: {len(summary)} симв., {model}, {round(time.time() - t0)} с")

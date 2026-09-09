@@ -20,7 +20,7 @@ import requests
 
 DEBUG = "/tmp/vision_debug.log"
 BUDGET = 34 * 1024          # безопасный потолок одного запроса, байт
-MODEL = "gpt-5.6-sol"
+MODEL = "gemini-3.8-flash"   # запасной путь: DeepSeek остаётся основным
 
 
 def dbg(m):
@@ -40,6 +40,12 @@ if os.path.exists(_p):
             ENV[k.strip()] = v.strip().strip('"').strip("'")
 
 KEY, URL = ENV.get("EXCASH_API_KEY", ""), ENV.get("EXCASH_API_URL", "")
+try:                                   # страж-прокси OpenClaw: CDN excash режет прямые тела >10 КБ (картинки base64 — всегда больше)
+    import urllib.request as _u
+    if _u.urlopen("http://127.0.0.1:8788/health", timeout=3).status == 200:
+        URL = "http://127.0.0.1:8788"
+except Exception:
+    pass
 IMG_EXT = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".heif")
 
 PROMPT = """Опиши это изображение максимально полезно и подробно для врача, который его прислал.
@@ -170,12 +176,19 @@ def _tiles(im):
 
 
 def main():
+    global PROMPT
     img = next((a for a in sys.argv[1:] if os.path.exists(a) and a.lower().endswith(IMG_EXT)), None)
     if not img:
         img = next((a for a in sys.argv[1:] if os.path.exists(a)), None)
     if not img:
         dbg("нет изображения argv=%s" % sys.argv)
         sys.exit("нет изображения")
+    # Свой вопрос вторым аргументом: раньше он молча игнорировался и модель
+    # всегда описывала картинку как медицинскую. Без аргумента — прежнее поведение.
+    ask = [a for a in sys.argv[1:] if a != img and not a.startswith("-")]
+    if ask:
+        PROMPT = " ".join(ask)
+        dbg("свой промпт (%d знаков)" % len(PROMPT))
     if not (KEY and URL):
         sys.exit("нет EXCASH ключей в ~/.openclaw/.env")
 
