@@ -6,12 +6,16 @@ deepseek: только DeepSeek (когда excash лежит/ключ отоз�
 import json, os, pwd, subprocess, sys, time
 
 PROFILES = {
-    "excash": {"primary": "excash/gpt-6-astra-1m",
-               "fallbacks": ["excash/gpt-5.6-sol-1m", "excash/gemini-3.8-flash", "excash/gpt-5.6-sol-1m-fast",
-                             "excash/gemini-3.7-flash-tiered", "dseek/deepseek-v4-flash-vision-exp"],
-               "cheap": "excash/gemini-3.8-flash", "brief": "excash/gpt-6-astra-1m"},
+    # 272k-Astra вдвое дешевле 1M (50 ₽/M против 100) и заставляет сжимать историю около 200k;
+    # 1M — первый резерв на переполнение и пин утреннего брифа. Heartbeat — на flash в лёгком режиме.
+    "excash": {"primary": "excash/gpt-6-astra",
+               "fallbacks": ["excash/gpt-6-astra-1m", "excash/gpt-5.6-sol-1m", "excash/gemini-3.8-flash",
+                             "excash/gpt-5.6-sol-1m-fast", "excash/gemini-3.7-flash-tiered", "dseek/deepseek-v4-flash-vision-exp"],
+               "cheap": "excash/gemini-3.8-flash", "brief": "excash/gpt-6-astra-1m", "heartbeat": "excash/gemini-3.8-flash",
+               "subagents": "excash/gpt-5.6-terra-1m"},   # рабочая лошадка для чёрной работы: быстрая, 1M, без рассуждений
     "deepseek": {"primary": "dseek/deepseek-v4-pro", "fallbacks": ["dseek/deepseek-v4-flash-vision-exp"],
-                 "cheap": "dseek/deepseek-v4-flash-vision-exp", "brief": "dseek/deepseek-v4-pro"},
+                 "cheap": "dseek/deepseek-v4-flash-vision-exp", "brief": "dseek/deepseek-v4-pro", "heartbeat": "dseek/deepseek-v4-flash-vision-exp",
+                 "subagents": "dseek/deepseek-v4-flash-vision-exp"},
 }
 CRON_PINS = {"openclaw": {"Утренний брифинг": "brief", "Вечерний дайджест": "cheap"}}   # по началу имени крона
 
@@ -29,14 +33,19 @@ def patch(user, prof):
     open(f"{c}.pre-models.{int(time.time())}", "w", encoding="utf-8").write(json.dumps(cfg, ensure_ascii=False, indent=2))
     d = cfg["agents"]["defaults"]
     d["model"] = {"primary": prof["primary"], "fallbacks": prof["fallbacks"]}
-    for k in ("subagents", "compaction"):
-        if isinstance(d.get(k), dict) and "model" in d[k]:
-            d[k]["model"] = prof["cheap"]
+    if isinstance(d.get("subagents"), dict):
+        d["subagents"]["model"] = prof.get("subagents", prof["cheap"])
+    if isinstance(d.get("compaction"), dict) and "model" in d["compaction"]:
+        d["compaction"]["model"] = prof["cheap"]
     if isinstance(d.get("compaction", {}).get("memoryFlush"), dict) and "model" in d["compaction"]["memoryFlush"]:
         d["compaction"]["memoryFlush"]["model"] = prof["cheap"]
     am = cfg.get("plugins", {}).get("entries", {}).get("active-memory", {}).get("config", {})
     if "model" in am:
         am["model"] = prof["cheap"]
+    hb = d.setdefault("heartbeat", {})
+    if isinstance(hb, dict):
+        hb["model"] = prof["heartbeat"]
+        hb["lightContext"] = True            # без полного контекста: раньше 48 heartbeat/день × 100k+ токенов
     json.dump(cfg, open(c, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     uid, gid = pwd.getpwnam(user).pw_uid, pwd.getpwnam(user).pw_gid
     os.chown(c, uid, gid)
