@@ -9,6 +9,8 @@
                                         подробный конспект → доставка владельцу. Идемпотентно (state.json).
   transcribe / clean / summarize / notify --out DIR   → отдельные стадии того же финиша
   selftest  [--minutes N]             → прогон финиша на куске прошлой записи (проверка контура)
+  fetch     --out DIR --url URL       → скачать готовую запись (YouTube/VK…) вместо захвата экрана, затем finish
+  link      --out DIR [--chat @bot] [--wait 15] → ссылка на комнату из кнопок чата организатора (ждёт до N минут)
   status    --out DIR
 
 Расшифровка: GigaAM v3 (Сбер, gigaam-v3-e2e-rnnt, контейнер 127.0.0.1:8001) — основной,
@@ -384,7 +386,16 @@ def cmd_finish(a):
     name = a.name or plan.get("slug")
     st = st_load(out)
     log(out, f"=== finish: {title} ===")
-    video = stage_stop(out, name)
+    video = None
+    src = plan.get("youtube") or (plan.get("url") if is_fetchable(plan.get("url")) else "")
+    if src and not a.no_fetch and not st.get("source"):
+        video = fetch_recording(out, src, name or "efir", audio_only=True)   # готовая запись надёжнее экрана
+        if video:
+            st = st_load(out)
+        else:
+            log(out, "готовая запись не скачалась — беру захват экрана")
+    if not video:
+        video = stage_stop(out, name)
     if not video:
         log(out, "записи нет — сегментов не найдено")
         tg_send(f"❌ {title}: запись не найдена в {out} — расшифровывать нечего.")
@@ -473,27 +484,36 @@ def cmd_plan(a):
             f"Регистрация через Telegram-бота организатора — за владельца нажать нельзя: отправь ему ссылку и попроси "
             f"переслать тебе ссылку на трансляцию. Итог одной строкой: зарегистрирован/что мешает, ссылка на трансляцию "
             f"(если появилась — положи её в {out}/plan.json в поле url)."]))
-    jobs.append(("Эфир: вход и запись — " + a.title, iso(s - timedelta(minutes=10)), 1500, [
+    link_cmd = f"{PY} {SELF} link --out \"{out}\" --wait 15" + (f" --chat \"{a.organizer}\"" if a.organizer else "")
+    jobs.append(("Эфир: вход и запись — " + a.title, iso(s - timedelta(minutes=10)), 1800, [
         "--message",
-        f"Эфир «{a.title}», начало {s.strftime('%H:%M')} МСК. Ссылка: {a.url or '— возьми из ' + out + '/plan.json (поле url)'}. "
-        f"Строго по скиллу webrec, браузер ТОЛЬКО с профилем rec (profile: \"rec\"):\n"
-        f"1) открой ссылку, войди как участник (без камеры и микрофона; имя — владельца из USER.md).\n"
+        f"Эфир «{a.title}», начало {s.strftime('%H:%M')} МСК. Действуй строго по шагам, не импровизируй.\n"
+        f"0) Ссылка: {a.url or 'в plan.json пусто'}. Если пусто или это не адрес комнаты — выполни: {link_cmd} "
+        f"(команда сама ждёт до 15 минут, пока организатор пришлёт ссылку кнопкой, и печатает JSON: url, youtube, zoom). "
+        f"Пусто и после неё — доложи владельцу одной строкой «ссылки нет» и НИЧЕГО не записывай.\n"
+        f"1) Открой url (YouTube предпочтительнее Zoom) в браузере ТОЛЬКО с профилем rec (profile: \"rec\"); войди как "
+        f"участник без камеры и микрофона, имя — владельца из USER.md; на YouTube нажми Play.\n"
         f"2) Как только видно плеер/спикера: {PY} {WEBREC} start --out \"{out}\" --name {slug} --until {until}\n"
         f"3) {PY} {WEBREC} unmute ; потом {PY} {WEBREC} probe — нужно sound: true. Тишина → повтори unmute (до 3 раз), "
         f"проверь, что вкладка эфира активна.\n"
-        f"4) Доложи одной строкой: вошёл/нет, recording: true/false, звук есть/нет. Не запускай selftest, других сайтов "
-        f"в профиле rec не открывай, конца эфира не жди и не поллируй — обработку делает отдельный крон."]))
-    jobs.append(("Эфир: контроль звука — " + a.title, iso(s + timedelta(minutes=20)), 600, [
+        f"4) Доложи одной строкой: вошёл/нет, recording: true/false, звук есть/нет. Не запускай selftest, других сайтов в "
+        f"профиле rec не открывай, конца эфира не жди — обработку делает отдельный крон (если был YouTube, он сам "
+        f"скачает запись оттуда)."]))
+    jobs.append(("Эфир: контроль звука — " + a.title, iso(s + timedelta(minutes=20)), 900, [
         "--message",
-        f"Контроль записи эфира «{a.title}»: {PY} {WEBREC} status --out \"{out}\" и {PY} {WEBREC} probe. "
-        f"Если recording: false — запусти {PY} {WEBREC} start --out \"{out}\" --name {slug} --until {until} "
-        f"(вкладка эфира в профиле rec должна быть открыта). Если тишина — {PY} {WEBREC} unmute и снова probe. "
-        f"Доложи одной строкой."]))
+        f"Контроль записи эфира «{a.title}»: {PY} {WEBREC} status --out \"{out}\" и {PY} {WEBREC} probe.\n"
+        f"- recording: true и sound: true — доложи одной строкой «идёт, звук есть».\n"
+        f"- recording: true, тишина — {PY} {WEBREC} unmute и снова probe (до 3 раз); доложи результат.\n"
+        f"- recording: false — сначала проверь, открыта ли комната: browser tabs с profile \"rec\". Комната открыта и в ней "
+        f"идёт эфир — {PY} {WEBREC} start --out \"{out}\" --name {slug} --until {until}, затем unmute и probe. "
+        f"Комнаты НЕТ — запись НЕ запускай (пустой экран писать бессмысленно): добудь ссылку как в задании входа "
+        f"(read чата организатора — кнопки печатаются строками «🔘»), войди в профиле rec и только тогда start. "
+        f"Ссылки нет нигде — доложи владельцу одной строкой, что эфир не записывается и почему."]))
     finish_cmd = f"{PY} {SELF} finish --out \"{out}\""
     jobs.append(("Эфир: обработка — " + a.title, iso(e + timedelta(minutes=12)), 10800, [
         "--command", finish_cmd, "--command-cwd", out]))
 
-    plan = {"title": a.title, "slug": slug, "url": a.url, "register_url": a.register_url, "focus": a.focus,
+    plan = {"title": a.title, "slug": slug, "url": a.url, "register_url": a.register_url, "focus": a.focus, "organizer": a.organizer,
             "start": s.isoformat(), "end": e.isoformat(), "out": out, "jobs": []}
     for name, at, timeout, payload in jobs:
         cmd = [oc, "cron", "add", "--name", name, "--at", at, "--timeout-seconds", str(timeout)]
@@ -513,6 +533,120 @@ def cmd_plan(a):
     print(json.dumps({"out": out, "slug": slug, "start_msk": s.strftime("%d.%m %H:%M"), "end_msk": e.strftime("%H:%M"),
                       "jobs": len(plan["jobs"]), "failed": sum(1 for j in plan["jobs"] if not j["ok"])}, ensure_ascii=False))
 
+
+FETCHABLE = ("youtube.com/", "youtu.be/", "vk.com/video", "vkvideo.ru", "rutube.ru", "twitch.tv", "vimeo.com")
+
+
+def is_fetchable(url):
+    return bool(url) and any(k in url for k in FETCHABLE)
+
+
+def classify_links(urls):
+    """youtube / zoom / other — для входа YouTube предпочтительнее Zoom (в браузере проще), Zoom — запасной."""
+    out = {}
+    for u in urls:
+        u = u.rstrip(".,;)»")
+        if "t.me/" in u or "telegram.me/" in u:
+            continue
+        if ("youtube.com/" in u or "youtu.be/" in u) and "youtube" not in out:
+            out["youtube"] = u
+        elif "zoom.us/" in u and "zoom" not in out:
+            out["zoom"] = u
+        elif u.startswith("http") and "other" not in out:
+            out["other"] = u
+    return out
+
+
+def fetch_recording(out, url, name, audio_only=True, proxy=""):
+    """yt-dlp → <name>_full.mp4 в папке эфира; состояние финиша сбрасывается. None — не скачалось."""
+    ytdlp = shutil.which("yt-dlp") or os.path.expanduser("~/.local/bin/yt-dlp")
+    if not os.path.exists(ytdlp):
+        ytdlp = os.path.join(os.path.dirname(PY), "yt-dlp")
+    if not os.path.exists(ytdlp):
+        log(out, "нет yt-dlp (~/mailvenv/bin/pip install -U yt-dlp)")
+        return None
+    for old in glob.glob(os.path.join(out, f"{name}_full.mp4")):
+        os.replace(old, old.replace("_full.mp4", "_full.prev.mp4"))
+    target = os.path.join(out, f"{name}_full.%(ext)s")
+    fmt = "bestaudio[ext=m4a]/bestaudio" if audio_only else "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best"
+    cmd = [ytdlp, "--no-warnings", "--no-playlist", "-f", fmt, "--merge-output-format", "mp4", "-o", target, url]
+    if proxy:
+        cmd += ["--proxy", proxy]
+    log(out, "yt-dlp: " + url + (" (только звук)" if audio_only else ""))
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+    if r.returncode != 0:
+        log(out, "yt-dlp ошибка: " + (r.stderr or r.stdout)[-300:])
+        for prev in glob.glob(os.path.join(out, f"{name}_full.prev.mp4")):
+            os.replace(prev, prev.replace("_full.prev.mp4", "_full.mp4"))
+        return None
+    got = [g for g in sorted(glob.glob(os.path.join(out, f"{name}_full.*")), key=os.path.getmtime)
+           if ".prev." not in g and not g.endswith((".part", ".ytdl"))]
+    if not got:
+        return None
+    path = got[-1]
+    if not path.endswith(".mp4"):
+        mp4 = os.path.join(out, f"{name}_full.mp4")
+        sh(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", path, "-c", "copy", mp4], timeout=1800)
+        if os.path.exists(mp4):
+            os.remove(path)
+            path = mp4
+    st = st_load(out)
+    for k in ("mean_db", "video", "summary_model"):
+        st.pop(k, None)
+    st["chunks"] = {}
+    st["source"] = url
+    st_save(out, st)
+    for f in glob.glob(os.path.join(out, "chunks", "*")) + [os.path.join(out, "audio_16k.wav")]:
+        if os.path.exists(f):
+            os.remove(f)
+    log(out, f"скачано: {os.path.basename(path)} ({os.path.getsize(path) // 1048576} МБ, {hms(duration(path))})")
+    return path
+
+
+def cmd_link(a):
+    """Ссылка на комнату — из чата организатора (кнопки «🔘 … → URL» печатает yoda_tg read). Ждёт до --wait минут."""
+    out = os.path.abspath(a.out)
+    plan = {}
+    try:
+        plan = json.load(open(os.path.join(out, "plan.json"), encoding="utf-8"))
+    except Exception:
+        pass
+    chat = a.chat or plan.get("organizer") or ""
+    if not chat:
+        sys.exit("не знаю чат организатора: --chat \"@bot\" или organizer в plan.json")
+    deadline = time.time() + a.wait * 60
+    while True:
+        r = sh(["sudo", "-n", "/root/yoda_tg.sh", "read", chat, "--n", str(a.n)], timeout=180)
+        links = classify_links(re.findall(r"https?://[^\s)\]»\"']+", r.stdout or ""))
+        if links:
+            plan.update({k: v for k, v in links.items()})
+            plan["url"] = links.get("youtube") or links.get("other") or links.get("zoom")
+            plan["organizer"] = chat
+            if os.path.isdir(out):
+                json.dump(plan, open(os.path.join(out, "plan.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+            log(out, f"ссылка из чата {chat}: {plan['url']}")
+            print(json.dumps({"url": plan["url"], **links}, ensure_ascii=False))
+            return
+        if time.time() >= deadline:
+            log(out, f"ссылки в чате {chat} нет (ждал {a.wait} мин)")
+            print(json.dumps({"url": None, "note": f"в чате {chat} за {a.wait} мин ссылки не появилось"}, ensure_ascii=False))
+            sys.exit(2)
+        time.sleep(a.every)
+
+
+def cmd_fetch(a):
+    """Скачать готовую запись (YouTube/VK…) в папку эфира вместо захвата экрана; дальше — finish."""
+    out = os.path.abspath(a.out)
+    os.makedirs(out, exist_ok=True)
+    plan = {}
+    try:
+        plan = json.load(open(os.path.join(out, "plan.json"), encoding="utf-8"))
+    except Exception:
+        pass
+    path = fetch_recording(out, a.url, a.name or plan.get("slug") or "efir", audio_only=a.audio_only, proxy=a.proxy)
+    if not path:
+        sys.exit(2)
+    print(json.dumps({"file": path, "duration": hms(duration(path)), "mb": os.path.getsize(path) // 1048576}, ensure_ascii=False))
 
 def cmd_status(a):
     out = os.path.abspath(a.out)
@@ -562,7 +696,7 @@ def cmd_selftest(a):
         sys.exit("не нашёл записи со звуком для селфтеста — укажи --source")
     print(f"источник: {src} → {a.minutes} мин с {a.offset} с")
     ns = argparse.Namespace(out=out, title="Проверка контура вебинаров", name="selftest", segment=a.segment,
-                            focus="", force=True, no_notify=a.no_notify, test=True)
+                            focus="", force=True, no_notify=a.no_notify, test=True, no_fetch=True)
     cmd_finish(ns)
     st = st_load(out)
     print(json.dumps({"chunks": {k: (v["engine"], v["sec"], len(v["text"]), len(v.get("clean") or "")) for k, v in st["chunks"].items()},
@@ -576,12 +710,14 @@ def main():
     p = sub.add_parser("plan"); p.add_argument("--title", required=True); p.add_argument("--url", default="")
     p.add_argument("--start", required=True, help='"DD.MM HH:MM" МСК'); p.add_argument("--end", required=True, help='"HH:MM" МСК')
     p.add_argument("--register-url", default=""); p.add_argument("--focus", default=""); p.add_argument("--out", default="")
+    p.add_argument("--organizer", default="", help='чат/бот организатора, куда приходит ссылка: "@MFS_magnet_bot"')
     p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_plan)
     for name in ("finish", "transcribe", "clean", "summarize", "notify"):
         q = sub.add_parser(name); q.add_argument("--out", required=True); q.add_argument("--title", default="")
         q.add_argument("--name", default=""); q.add_argument("--segment", type=int, default=SEG_SEC)
         q.add_argument("--focus", default=""); q.add_argument("--force", action="store_true")
         q.add_argument("--no-notify", action="store_true"); q.add_argument("--test", action="store_true")
+        q.add_argument("--no-fetch", action="store_true", help="не пытаться скачать готовую запись с YouTube")
         q.set_defaults(func={"finish": cmd_finish,
                              "transcribe": lambda a: stage_transcribe(os.path.abspath(a.out), find_full(os.path.abspath(a.out)), a.segment),
                              "clean": lambda a: stage_clean(os.path.abspath(a.out), a.title or os.path.basename(a.out)),
@@ -589,6 +725,12 @@ def main():
                              "notify": lambda a: stage_notify(os.path.abspath(a.out), a.title or os.path.basename(a.out),
                                                               find_full(os.path.abspath(a.out)), st_load(os.path.abspath(a.out)).get("mean_db"), a.test)}[name])
     s = sub.add_parser("status"); s.add_argument("--out", required=True); s.set_defaults(func=cmd_status)
+    lk = sub.add_parser("link", help="добыть ссылку на комнату из чата организатора (кнопки)"); lk.add_argument("--out", required=True)
+    lk.add_argument("--chat", default=""); lk.add_argument("--wait", type=int, default=15, help="минут ждать"); lk.add_argument("--every", type=int, default=60)
+    lk.add_argument("--n", type=int, default=8); lk.set_defaults(func=cmd_link)
+    f = sub.add_parser("fetch", help="скачать готовую запись (YouTube и др.) в папку эфира"); f.add_argument("--out", required=True)
+    f.add_argument("--url", required=True); f.add_argument("--name", default=""); f.add_argument("--audio-only", action="store_true")
+    f.add_argument("--proxy", default=""); f.set_defaults(func=cmd_fetch)
     t = sub.add_parser("selftest"); t.add_argument("--minutes", type=int, default=6); t.add_argument("--offset", type=int, default=60)
     t.add_argument("--segment", type=int, default=180); t.add_argument("--source", default=""); t.add_argument("--no-notify", action="store_true")
     t.set_defaults(func=cmd_selftest)

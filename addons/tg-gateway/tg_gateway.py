@@ -169,6 +169,24 @@ async def read(chat: str, limit: int = 50, media: int = 0):
             "has_media": bool(getattr(m, "media", None)),
             "sender": _who(await m.get_sender()) if getattr(m, "sender_id", None) else "",
         }
+        # 09.09: кнопки и скрытые ссылки — иначе «Ссылка на эфир 👇» без самой ссылки
+        btns = []
+        for brow in (getattr(m, "buttons", None) or []):
+            for b in brow:
+                if getattr(b, "url", None) or getattr(b, "text", None):
+                    btns.append({"text": getattr(b, "text", "") or "", "url": getattr(b, "url", None)})
+        links = []
+        try:
+            for ent_, txt_ in (m.get_entities_text() or []):
+                u = getattr(ent_, "url", None) or (txt_ if txt_.startswith(("http://", "https://", "t.me/")) else None)
+                if u and u not in links:
+                    links.append(u)
+        except Exception:
+            pass
+        if btns:
+            row["buttons"] = btns
+        if links:
+            row["links"] = links
         # 31.07: media=1 — фото для vision-разбора (копир: «стопы на КАРТИНКЕ»)
         if media and getattr(m, "photo", None):
             try:
