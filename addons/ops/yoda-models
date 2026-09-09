@@ -45,7 +45,8 @@ def patch(user, prof):
     hb = d.setdefault("heartbeat", {})
     if isinstance(hb, dict):
         hb["model"] = prof["heartbeat"]
-        hb["lightContext"] = True            # без полного контекста: раньше 48 heartbeat/день × 100k+ токенов
+        hb["lightContext"] = True            # лёгкий бутстрап
+        hb["isolatedSession"] = True         # свежая сессия на каждый пульс: main-сессия таскала ~90k токенов × 48 раз в день
     json.dump(cfg, open(c, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     uid, gid = pwd.getpwnam(user).pw_uid, pwd.getpwnam(user).pw_gid
     os.chown(c, uid, gid)
