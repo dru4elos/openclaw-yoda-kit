@@ -180,8 +180,12 @@ def llm(models, messages, max_tokens, temperature=0.2, timeout=900):
                         continue
                     if stream:
                         parts = []
-                        for line in r.iter_lines(decode_unicode=True):
-                            if not line or not line.startswith("data:"):
+                        r.encoding = "utf-8"           # SSE без charset requests читает как latin-1 → кириллица в кракозябры
+                        for raw_line in r.iter_lines(decode_unicode=False):
+                            if not raw_line:
+                                continue
+                            line = raw_line.decode("utf-8", "replace")
+                            if not line.startswith("data:"):
                                 continue
                             payload = line[5:].strip()
                             if payload == "[DONE]":
