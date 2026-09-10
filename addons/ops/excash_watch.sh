@@ -1,13 +1,15 @@
 #!/bin/bash
-# Дозор за excash: когда ключ снова принимают — сказать доктору и напомнить вернуть модели. Крон root каждые 30 мин.
+# Дозор за excash: ключ/баланс (401) или провайдер лежит (5xx/529) — сообщить владельцу через tome, когда состояние меняется. Крон root каждые 30 мин.
 ENV=/home/openclaw/.openclaw/.env; ST=/var/tmp/excash_watch.state
 K=$(python3 -c "import re;print(re.search(r'^EXCASH_API_KEY=(.*)$',open('$ENV').read(),re.M).group(1).strip().strip('\"'))")
 U=$(python3 -c "import re;print(re.search(r'^EXCASH_API_URL=(.*)$',open('$ENV').read(),re.M).group(1).strip().strip('\"'))")
-code=$(curl -s -m 20 -o /tmp/excash_watch.json -w "%{http_code}" -H "Authorization: Bearer $K" "$U/models")
+# /models отвечает 200 даже когда бэкенд моделей лежит — проверяем реальный chat через страж
+code=$(curl -s -m 40 -o /tmp/excash_watch.json -w "%{http_code}" -H "Authorization: Bearer $K" -H "Content-Type: application/json" -d '{"model":"gemini-3.8-flash","messages":[{"role":"user","content":"ok?"}],"max_tokens":5}' http://127.0.0.1:8788/chat/completions)
 prev=$(cat $ST 2>/dev/null || echo "?")
 echo "$code" > $ST
-if [ "$code" = "200" ] && [ "$prev" != "200" ]; then
-  su - openclaw -c "~/mailvenv/bin/python ~/.openclaw/workspace/skills/tome/tome.py msg '✅ excash снова принимает ключ (HTTP 200). Йода пока на DeepSeek — вернуть цепочку: sudo yoda-models excash'" >/dev/null 2>&1
-elif [ "$code" != "200" ] && [ "$prev" = "200" ]; then
-  su - openclaw -c "~/mailvenv/bin/python ~/.openclaw/workspace/skills/tome/tome.py msg '⚠️ excash перестал принимать ключ (HTTP $code): $(head -c 120 /tmp/excash_watch.json). Если Йода замолчит — sudo yoda-models deepseek'" >/dev/null 2>&1
-fi
+say() { su - openclaw -c "~/mailvenv/bin/python ~/.openclaw/workspace/skills/tome/tome.py msg \"$1\"" >/dev/null 2>&1; }
+case "$code" in
+  200) [ "$prev" != "200" ] && say "✅ excash снова отвечает (HTTP 200). Если Йода был переведён на DeepSeek — вернуть: sudo yoda-models excash";;
+  401|402|403) [ "$prev" != "$code" ] && say "⚠️ excash отвергает КЛЮЧ (HTTP $code) — обычно это нулевой баланс. Пополнить, затем при необходимости sudo yoda-models excash. Пока: sudo yoda-models deepseek";;
+  5*|529|000) [ "$prev" != "$code" ] && say "⚠️ excash ЛЕЖИТ на стороне провайдера (HTTP $code, «backend restarting»). Ключ и баланс ни при чём. Йода сам уходит на резервы; если молчит долго — sudo yoda-models deepseek";;
+esac
