@@ -146,17 +146,25 @@ def _sum_llm(text, folders):
         "Правила: только по существу, без воды и без пересказа рекламы. Если пост важный — "
         "поясни ЧЕМ именно. Дубли из разных каналов объединяй. Максимум 350 слов."
     )
-    try:
-        r = requests.post(u.rstrip("/") + "/chat/completions",
-                          headers={"Authorization": "Bearer " + k, "Content-Type": "application/json"},
-                          json={"model": "gemini-3.8-flash", "max_tokens": 8000, "temperature": 0.3,
-                                "messages": [{"role": "user",
-                                              "content": prompt + "\n\n=== ПОСТЫ ===\n" + text[:250000]}]},
-                          timeout=600)
-        r.raise_for_status()
-        return ((r.json().get("choices") or [{}])[0].get("message", {}) or {}).get("content", "").strip()
-    except Exception as e:
-        return f"[ошибка LLM: {type(e).__name__}]\n" + text[:2000]
+    base = _excash_url(u).rstrip("/")          # страж-прокси: прямые тела >10 КБ CDN режет (400)
+    last = ""
+    for model in ("gpt-5.3-codex-spark", "gemini-3.8-flash", "gpt-5.6-sol-1m"):
+        try:
+            r = requests.post(base + "/chat/completions",
+                              headers={"Authorization": "Bearer " + k, "Content-Type": "application/json"},
+                              json={"model": model, "max_tokens": 8000, "temperature": 0.3,
+                                    "messages": [{"role": "user",
+                                                  "content": prompt + "\n\n=== ПОСТЫ ===\n" + text[:250000]}]},
+                              timeout=600)
+            r.raise_for_status()
+            out = ((r.json().get("choices") or [{}])[0].get("message", {}) or {}).get("content", "").strip()
+            if out:
+                return out
+            last = f"{model}: пустой ответ"
+        except Exception as e:
+            last = f"{model}: {type(e).__name__}"
+            print(f"(дайджест {last} — пробую резерв)", file=sys.stderr)
+    return f"[ошибка LLM: {last}]\n" + text[:2000]
 
 
 def cmd_digest(a):
@@ -511,11 +519,12 @@ def _classify_debts(items):
                         "what": x.get("what") or ""}
         return out
 
-    attempts = [("https://api.deepseek.com/chat/completions", key, "deepseek-v4-flash")]
+    attempts = []
     ex_key, ex_url = _llm_env("EXCASH_API_KEY"), _excash_url(_llm_env("EXCASH_API_URL"))
-    if ex_key and ex_url:
-        attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key,
-                         "gemini-3.8-flash"))
+    if ex_key and ex_url:                      # Spark (2400 ток/с) первым, flash — резерв, deepseek — последний
+        attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key, "gpt-5.3-codex-spark"))
+        attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key, "gemini-3.8-flash"))
+    attempts.append(("https://api.deepseek.com/chat/completions", key, "deepseek-v4-flash"))
     acc = {}
     for url, api_key, model in attempts:
         try:
@@ -910,10 +919,9 @@ def _extract_promises(items):
     attempts = []
     ex_key, ex_url = _llm_env("EXCASH_API_KEY"), _excash_url(_llm_env("EXCASH_API_URL"))
     if ex_key and ex_url:
-        attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key,
-                         "gemini-3.8-flash"))
-        attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key,
-                         "gpt-5.6-sol-1m"))
+        attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key, "gpt-5.3-codex-spark"))
+        attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key, "gemini-3.8-flash"))
+        attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key, "gpt-5.6-sol-1m"))
     attempts.append(("https://api.deepseek.com/chat/completions", key, "deepseek-v4-flash"))
     keys = {k for k, _n, _c, _m in items}
     for url, api_key, model in attempts:

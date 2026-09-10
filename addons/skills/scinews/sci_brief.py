@@ -34,7 +34,7 @@ TXT_FOR_BRIEF = f"{WS}/memory/sci_alerts_today.txt"
 TOME = f"{WS}/skills/tome/tome.py"
 PY = sys.executable
 MSK = dt.timezone(dt.timedelta(hours=3))
-MODELS = ["gemini-3.8-flash", "gpt-5.6-sol-1m", "gemini-3.7-flash-tiered"]
+MODELS = ["gpt-5.3-codex-spark", "gemini-3.8-flash", "gpt-5.6-sol-1m"]   # Spark первым: письма, ранжирование, выжимки — быстро
 READER = sci.ENV.get("SCI_READER", "детский травматолог-ортопед, к.м.н.; интересы: детская травма и ортопедия, "
                      "переломы и остеосинтез, ПКС/мениск, дисплазия ТБС, сколиоз, плоскостопие, косолапость, "
                      "болезнь Пертеса, артроскопия, реабилитация, детская хирургия, ИИ в медицине")

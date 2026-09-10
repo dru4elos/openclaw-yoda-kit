@@ -41,7 +41,7 @@ MSK = ZoneInfo("Europe/Moscow")
 EVENTS_DIR = f"{OC}/workspace/Эфиры"
 SEG_SEC = 240                                   # кусок для GigaAM, сек: контейнер с лимитом 900 МБ падает на 10-мин, 3–4 мин держит
 SILENCE_DB = -55.0
-CLEAN_MODELS = ["gemini-3.8-flash", "gpt-5.6-sol-1m", "gemini-3.7-flash-tiered"]
+CLEAN_MODELS = ["gpt-5.3-codex-spark", "gemini-3.8-flash", "gpt-5.6-sol-1m"]   # Spark: 2400 ток/с, чистка куска ~1 с
 SUM_MODELS = ["gpt-6-astra-1m", "gpt-5.6-sol-1m", "gemini-3.8-flash"]
 
 

@@ -12,7 +12,7 @@ PROFILES = {
                "fallbacks": ["excash/gpt-6-astra-1m", "excash/gpt-5.6-sol-1m", "excash/gemini-3.8-flash",
                              "excash/gpt-5.6-sol-1m-fast", "excash/gemini-3.7-flash-tiered", "dseek/deepseek-v4-flash-vision-exp"],
                "cheap": "excash/gemini-3.8-flash", "brief": "excash/gpt-6-astra-1m", "heartbeat": "excash/gemini-3.8-flash",
-               "subagents": "excash/gpt-5.6-terra-1m"},   # рабочая лошадка для чёрной работы: быстрая, 1M, без рассуждений
+               "subagents": "excash/gpt-5.3-codex-spark"},   # чёрная работа: Codex Spark на Cerebras, 2400 ток/с, 128k; Terra 1M — для >100k
     "deepseek": {"primary": "dseek/deepseek-v4-pro", "fallbacks": ["dseek/deepseek-v4-flash-vision-exp"],
                  "cheap": "dseek/deepseek-v4-flash-vision-exp", "brief": "dseek/deepseek-v4-pro", "heartbeat": "dseek/deepseek-v4-flash-vision-exp",
                  "subagents": "dseek/deepseek-v4-flash-vision-exp"},
