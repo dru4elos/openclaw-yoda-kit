@@ -232,6 +232,31 @@ def fresh_from_epmc(days, top):
     return out[:top]
 
 
+def _flat(v):
+    """Любое значение из JSON модели → строка (Spark любит вернуть объект там, где ждали строку)."""
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v.strip()
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, list):
+        return "; ".join(_flat(x) for x in v if _flat(x))
+    if isinstance(v, dict):
+        return "; ".join(f"{k}: {_flat(x)}" for k, x in v.items() if _flat(x))
+    return str(v)
+
+
+def _norm_summary(s):
+    s = s if isinstance(s, dict) else {}
+    out = {k: _flat(s.get(k)) for k in ("tldr", "design", "n", "meaning", "evidence", "caveat")}
+    f = s.get("findings")
+    if isinstance(f, str):
+        f = [f]
+    out["findings"] = [_flat(x) for x in (f or []) if _flat(x)]
+    return out
+
+
 def summarize(art):
     """Выжимка по аннотации или полному тексту (OA). Только заголовок — честно без LLM."""
     text, src = "", ""
@@ -266,8 +291,7 @@ def summarize(art):
         s = ask_json(prompt, kind="object", max_tokens=6000)
         if not isinstance(s, dict):
             raise ValueError("не объект")
-        s.setdefault("findings", [])
-        art["summary"] = s
+        art["summary"] = _norm_summary(s)
     except Exception as e:
         log(f"выжимка «{art.get('en', '')[:40]}»: {e}")
         art["summary"] = {"tldr": (art.get("abstract") or art.get("desc") or "")[:600], "design": "", "n": "",
@@ -358,7 +382,8 @@ def build_docx(brief, path):
         h.append(r); par._p.append(h)
 
     def labeled(cell, label, text, color=NAVY):
-        if not (text or "").strip():
+        text = _flat(text)
+        if not text.strip():
             return
         p = cell.add_paragraph()
         r = p.add_run(label + " "); r.bold = True; r.font.color.rgb = RGBColor.from_string(color); r.font.size = Pt(10)
@@ -370,7 +395,7 @@ def build_docx(brief, path):
         c = t.rows[0].cells[0]; shade(c, LIGHT)
         p = c.paragraphs[0]
         badge(p, a["id"], NAVY, "FFFFFF", 9)
-        r = p.add_run(a.get("ru") or a.get("en") or "?"); r.bold = True; r.font.size = Pt(12); r.font.color.rgb = RGBColor.from_string("111827")
+        r = p.add_run(_flat(a.get("ru")) or _flat(a.get("en")) or "?"); r.bold = True; r.font.size = Pt(12); r.font.color.rgb = RGBColor.from_string("111827")
         if a.get("en") and a.get("ru") and a["en"].strip().lower() != a["ru"].strip().lower():
             pe = c.add_paragraph(); re_ = pe.add_run(a["en"]); re_.italic = True; re_.font.size = Pt(9); re_.font.color.rgb = RGBColor.from_string(GREY)
         pb = c.add_paragraph()
@@ -384,7 +409,7 @@ def build_docx(brief, path):
             badge(pb, src, "DCFCE7" if "полный" in src else "FEF3C7", "14532D" if "полный" in src else "78350F")
         elif a.get("oa"):
             badge(pb, "open access", "DCFCE7", "14532D")
-        s = a.get("summary") or {}
+        s = _norm_summary(a.get("summary") or {})
         labeled(c, "Коротко:", s.get("tldr", ""))
         if not compact:
             labeled(c, "Дизайн:", " — ".join(x for x in [s.get("design", ""), s.get("n", "")] if x))
@@ -398,7 +423,7 @@ def build_docx(brief, path):
         elif s.get("meaning"):
             labeled(c, "Что это значит:", s.get("meaning", ""), TEAL)
         if a.get("why"):
-            labeled(c, "Зачем вам:", a["why"], TEAL)
+            labeled(c, "Зачем вам:", _flat(a["why"]), TEAL)
         pl = c.add_paragraph()
         L = links_of(a)
         for i, (name, url) in enumerate(L.items()):
