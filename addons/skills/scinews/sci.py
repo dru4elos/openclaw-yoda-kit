@@ -34,12 +34,14 @@ if os.path.exists(_p):
 
 UNPAYWALL_EMAIL = ENV.get("UNPAYWALL_EMAIL", "you@example.com")
 
-# ---------- LLM: excash gemini-3.1-pro -> резерв DeepSeek V4 Pro ----------
+# ---------- LLM: excash (страж → прямой) -> резерв DeepSeek V4.1 Flash ----------
 def _llm_once(base_url, key, model, messages, max_tokens, temperature, timeout=600):
+    payload = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature}
+    if "deepseek.com" in base_url:
+        payload["thinking"] = {"type": "disabled"}   # V4.1 Flash: без рассуждений — быстрее и не съедает лимит
     r = requests.post(base_url.rstrip("/") + "/chat/completions",
                       headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
-                      json={"model": model, "messages": messages,
-                            "max_tokens": max_tokens, "temperature": temperature}, timeout=timeout)
+                      json=payload, timeout=timeout)
     r.raise_for_status()
     return ((r.json().get("choices", [{}])[0].get("message", {}) or {}).get("content", "")) or ""
 
@@ -69,8 +71,8 @@ def llm(messages, max_tokens=20000, temperature=0.35, models=("gemini-3.8-flash"
         sys.stderr.write("excash недоступен -> DeepSeek\n")
     dk = ENV.get("DEEPSEEK_API_KEY")
     if dk:
-        # резерв: deepseek-v4-flash-vision-exp — быстрый (1с) и мультимодальный
-        return _llm_once("https://api.deepseek.com/v1", dk, "deepseek-v4-flash-vision-exp",
+        # резерв: DeepSeek V4.1 Flash — 240 ток/с, 1M контекста, мультимодальный
+        return _llm_once("https://api.deepseek.com/v1", dk, "deepseek-flash",
                          messages, min(max(max_tokens, 8000), 32000), temperature, timeout=900)
     sys.exit("нет ни EXCASH, ни DEEPSEEK ключей в ~/.openclaw/.env")
 

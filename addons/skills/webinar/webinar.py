@@ -145,6 +145,7 @@ def tg_doc(path, caption=""):
     return r.ok
 
 
+DS_KEY = E.get("DEEPSEEK_API_KEY", "")                           # резерв: DeepSeek V4.1 Flash напрямую
 GUARD_URL = E.get("EXCASH_GUARD_URL", "http://127.0.0.1:8788")   # страж-прокси OpenClaw: CDN excash режет прямые тела >10 КБ
 
 
@@ -159,53 +160,58 @@ def _excash_bases():
 
 
 def llm(models, messages, max_tokens, temperature=0.2, timeout=900):
-    """Первая живая модель из списка; пустой ответ = ошибка (агрегатор так «падает»)."""
-    if not (EXCASH_URL and EXCASH_KEY):
-        raise RuntimeError("нет EXCASH_API_URL/EXCASH_API_KEY в ~/.openclaw/.env")
+    """Первая живая модель из списка; пустой ответ = ошибка (агрегатор так «падает»).
+    Маршруты: каждая модель excash через страж, затем напрямую; последний резерв —
+    DeepSeek V4.1 Flash напрямую без рассуждений (иначе они съедают max_tokens)."""
+    routes = [(base, EXCASH_KEY, model, {}) for model in models for base in _excash_bases()] \
+        if (EXCASH_URL and EXCASH_KEY) else []
+    if DS_KEY:
+        routes.append(("https://api.deepseek.com", DS_KEY, "deepseek-flash", {"thinking": {"type": "disabled"}}))
+    if not routes:
+        raise RuntimeError("нет ни EXCASH_API_URL/EXCASH_API_KEY, ни DEEPSEEK_API_KEY в ~/.openclaw/.env")
     last = ""
-    for model in models:
-        for base in _excash_bases():
-            for attempt in (1, 2):
-                try:
-                    stream = max_tokens > 8000     # длинная генерация без потока ловит 504 на границе провайдера
-                    r = requests.post(f"{base}/chat/completions",
-                                      headers={"Authorization": f"Bearer {EXCASH_KEY}"},
-                                      json={"model": model, "messages": messages, "temperature": temperature,
-                                            "max_tokens": max_tokens, "stream": stream}, timeout=timeout, stream=stream)
-                    if r.status_code != 200:
-                        last = f"{model}@{base.split('//')[-1][:22]}: HTTP {r.status_code} {r.text[:80]}"
-                        if r.status_code in (400, 404, 413):
-                            break                    # этот путь не примет — пробуем другой адрес
-                        time.sleep(5 * attempt)
-                        continue
-                    if stream:
-                        parts = []
-                        r.encoding = "utf-8"           # SSE без charset requests читает как latin-1 → кириллица в кракозябры
-                        for raw_line in r.iter_lines(decode_unicode=False):
-                            if not raw_line:
-                                continue
-                            line = raw_line.decode("utf-8", "replace")
-                            if not line.startswith("data:"):
-                                continue
-                            payload = line[5:].strip()
-                            if payload == "[DONE]":
-                                break
-                            try:
-                                delta = ((json.loads(payload).get("choices") or [{}])[0].get("delta") or {}).get("content")
-                            except Exception:
-                                continue
-                            if delta:
-                                parts.append(delta)
-                        text = "".join(parts)
-                    else:
-                        d = r.json()
-                        text = ((d.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-                    if text.strip():
-                        return text.strip(), model
-                    last = f"{model}: пустой ответ"
-                except Exception as ex:
-                    last = f"{model}@{base.split('//')[-1][:22]}: {type(ex).__name__}"
+    for base, api_key, model, extra in routes:
+        for attempt in (1, 2):
+            try:
+                stream = max_tokens > 8000     # длинная генерация без потока ловит 504 на границе провайдера
+                r = requests.post(f"{base}/chat/completions",
+                                  headers={"Authorization": f"Bearer {api_key}"},
+                                  json={"model": model, "messages": messages, "temperature": temperature,
+                                        "max_tokens": max_tokens, "stream": stream, **extra}, timeout=timeout, stream=stream)
+                if r.status_code != 200:
+                    last = f"{model}@{base.split('//')[-1][:22]}: HTTP {r.status_code} {r.text[:80]}"
+                    if r.status_code in (400, 404, 413):
+                        break                    # этот путь не примет — пробуем другой адрес
                     time.sleep(5 * attempt)
+                    continue
+                if stream:
+                    parts = []
+                    r.encoding = "utf-8"           # SSE без charset requests читает как latin-1 → кириллица в кракозябры
+                    for raw_line in r.iter_lines(decode_unicode=False):
+                        if not raw_line:
+                            continue
+                        line = raw_line.decode("utf-8", "replace")
+                        if not line.startswith("data:"):
+                            continue
+                        payload = line[5:].strip()
+                        if payload == "[DONE]":
+                            break
+                        try:
+                            delta = ((json.loads(payload).get("choices") or [{}])[0].get("delta") or {}).get("content")
+                        except Exception:
+                            continue
+                        if delta:
+                            parts.append(delta)
+                    text = "".join(parts)
+                else:
+                    d = r.json()
+                    text = ((d.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+                if text.strip():
+                    return text.strip(), model
+                last = f"{model}: пустой ответ"
+            except Exception as ex:
+                last = f"{model}@{base.split('//')[-1][:22]}: {type(ex).__name__}"
+                time.sleep(5 * attempt)
     raise RuntimeError("все модели отказали: " + last)
 
 

@@ -148,11 +148,15 @@ def _sum_llm(text, folders):
     )
     base = _excash_url(u).rstrip("/")          # страж-прокси: прямые тела >10 КБ CDN режет (400)
     last = ""
-    for model in ("gpt-5.3-codex-spark", "gemini-3.8-flash", "gpt-5.6-sol-1m"):
+    routes = [(base, k, model, {}) for model in ("gpt-5.3-codex-spark", "gemini-3.8-flash", "gpt-5.6-sol-1m")]
+    dk = _llm_env("DEEPSEEK_API_KEY")
+    if dk:                                      # последний резерв: DeepSeek V4.1 Flash напрямую, без рассуждений
+        routes.append(("https://api.deepseek.com", dk, "deepseek-flash", {"thinking": {"type": "disabled"}}))
+    for rbase, rkey, model, extra in routes:
         try:
-            r = requests.post(base + "/chat/completions",
-                              headers={"Authorization": "Bearer " + k, "Content-Type": "application/json"},
-                              json={"model": model, "max_tokens": 8000, "temperature": 0.3,
+            r = requests.post(rbase + "/chat/completions",
+                              headers={"Authorization": "Bearer " + rkey, "Content-Type": "application/json"},
+                              json={"model": model, "max_tokens": 8000, "temperature": 0.3, **extra,
                                     "messages": [{"role": "user",
                                                   "content": prompt + "\n\n=== ПОСТЫ ===\n" + text[:250000]}]},
                               timeout=600)
@@ -489,8 +493,11 @@ def _classify_debts(items):
     def _try(url, api_key, model):
         # max_tokens щедрый: модели reasoning тратят сотни токенов на рассуждения,
         # при скупом лимите content приходит пустым или обрезанным
-        body = _j.dumps({"model": model, "max_tokens": 8000, "temperature": 0.1,
-                         "messages": [{"role": "user", "content": prompt}]}).encode()
+        payload = {"model": model, "max_tokens": 8000, "temperature": 0.1,
+                   "messages": [{"role": "user", "content": prompt}]}
+        if "deepseek.com" in url:            # V4.1 Flash: рассуждения выключаем — иначе они съедают лимит и content пустой
+            payload["thinking"] = {"type": "disabled"}
+        body = _j.dumps(payload).encode()
         req = _u.Request(url, data=body,
                          headers={"Authorization": "Bearer " + api_key,
                                   "Content-Type": "application/json"})
@@ -524,7 +531,7 @@ def _classify_debts(items):
     if ex_key and ex_url:                      # Spark (2400 ток/с) первым, flash — резерв, deepseek — последний
         attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key, "gpt-5.3-codex-spark"))
         attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key, "gemini-3.8-flash"))
-    attempts.append(("https://api.deepseek.com/chat/completions", key, "deepseek-v4-flash"))
+    attempts.append(("https://api.deepseek.com/chat/completions", key, "deepseek-flash"))
     acc = {}
     for url, api_key, model in attempts:
         try:
@@ -886,10 +893,12 @@ def _extract_promises(items):
         "Для promise:false остальные поля пустые. Без пояснений.\n\n" + blob)
 
     def _try(url, api_key, model):
-        # 16000: deepseek-v4-flash сжигает ~4 тыс. токенов рассуждений на КАЖДУЮ
-        # фразу и при меньшем лимите отдаёт content ПУСТЫМ — обещания терялись молча
-        body = _j.dumps({"model": model, "max_tokens": 16000, "temperature": 0.1,
-                         "messages": [{"role": "user", "content": prompt}]}).encode()
+        # 16000: запас для рассуждающих моделей excash (Spark/Sol); у DeepSeek рассуждения выключены явно
+        payload = {"model": model, "max_tokens": 16000, "temperature": 0.1,
+                   "messages": [{"role": "user", "content": prompt}]}
+        if "deepseek.com" in url:            # V4.1 Flash: рассуждения выключаем — иначе они съедают лимит и content пустой
+            payload["thinking"] = {"type": "disabled"}
+        body = _j.dumps(payload).encode()
         req = _u.Request(url, data=body,
                          headers={"Authorization": "Bearer " + api_key,
                                   "Content-Type": "application/json"})
@@ -914,15 +923,15 @@ def _extract_promises(items):
                           "date": (x.get("date") or "").strip()}
         return out
 
-    # Gemini первым: deepseek на этой задаче уходит в многотысячные рассуждения,
-    # медленно и упирается в лимит. Он остаётся резервом.
+    # Spark первым (скорость), затем flash и sol-1m; последний резерв — DeepSeek V4.1 Flash
+    # напрямую без рассуждений (240 ток/с, качество на этой задаче не хуже Luna).
     attempts = []
     ex_key, ex_url = _llm_env("EXCASH_API_KEY"), _excash_url(_llm_env("EXCASH_API_URL"))
     if ex_key and ex_url:
         attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key, "gpt-5.3-codex-spark"))
         attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key, "gemini-3.8-flash"))
         attempts.append((ex_url.rstrip("/") + "/chat/completions", ex_key, "gpt-5.6-sol-1m"))
-    attempts.append(("https://api.deepseek.com/chat/completions", key, "deepseek-v4-flash"))
+    attempts.append(("https://api.deepseek.com/chat/completions", key, "deepseek-flash"))
     keys = {k for k, _n, _c, _m in items}
     for url, api_key, model in attempts:
         try:

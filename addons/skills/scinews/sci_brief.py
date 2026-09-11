@@ -73,7 +73,7 @@ def ask(prompt, max_tokens=8000, temperature=0.2):
     dk = sci.ENV.get("DEEPSEEK_API_KEY")
     if dk:
         try:
-            txt = sci._llm_once("https://api.deepseek.com/v1", dk, "deepseek-v4-flash",
+            txt = sci._llm_once("https://api.deepseek.com/v1", dk, "deepseek-flash",
                                 [{"role": "user", "content": prompt}], max(max_tokens, 16000), temperature, timeout=600)
             if txt.strip():
                 return txt

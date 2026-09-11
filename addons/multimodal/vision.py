@@ -73,7 +73,7 @@ TILE_PROMPT = """Это ФРАГМЕНТ {n} из {total} одного изоб�
 
 
 DS_KEY = ENV.get("DEEPSEEK_API_KEY", "")
-DS_MODEL = "deepseek-v4-flash-vision-exp"
+DS_MODEL = "deepseek-flash"          # DeepSeek V4.1 Flash (старые id перенаправляются на него же)
 DS_BUDGET = 900 * 1024        # DeepSeek спокойно берёт 254КБ, ставим запас
 
 
@@ -83,7 +83,7 @@ def _ask_deepseek(data, mime, prompt):
     if not DS_KEY:
         return ""
     body = json.dumps({
-        "model": DS_MODEL, "max_tokens": 8000, "temperature": 0.2,
+        "model": DS_MODEL, "max_tokens": 8000, "temperature": 0.2, "thinking": {"type": "disabled"},
         "messages": [{"role": "user", "content": [
             {"type": "image_url", "image_url": {
                 "url": f"data:image/{mime};base64," + base64.b64encode(data).decode()}},
