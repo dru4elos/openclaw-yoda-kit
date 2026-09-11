@@ -13,3 +13,19 @@ case "$code" in
   401|402|403) [ "$prev" != "$code" ] && say "⚠️ excash отвергает КЛЮЧ (HTTP $code) — обычно это нулевой баланс. Пополнить, затем при необходимости sudo yoda-models excash. Пока: sudo yoda-models deepseek";;
   5*|529|000) [ "$prev" != "$code" ] && say "⚠️ excash ЛЕЖИТ на стороне провайдера (HTTP $code, «backend restarting»). Ключ и баланс ни при чём. Йода сам уходит на резервы; если молчит долго — sudo yoda-models deepseek";;
 esac
+
+# Дозор за балансом DeepSeek (резерв всей Йоды и поисковых субагентов): ниже $2 — сказать один раз, после пополнения — отбой.
+DK=$(python3 -c "import re;m=re.search(r'^DEEPSEEK_API_KEY=(.*)$',open('$ENV').read(),re.M);print(m.group(1).strip().strip('\"') if m else '')")
+if [ -n "$DK" ]; then
+  DST=/var/tmp/deepseek_watch.state
+  bal=$(curl -s -m 20 -H "Authorization: Bearer $DK" https://api.deepseek.com/user/balance | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['balance_infos'][0]['total_balance'])" 2>/dev/null)
+  if [ -n "$bal" ]; then
+    st=$(python3 -c "print('low' if float('$bal')<2 else 'ok')")
+    dprev=$(cat $DST 2>/dev/null || echo "?")
+    echo "$st" > $DST
+    [ "$st" = "low" ] && [ "$dprev" != "low" ] && say "⚠️ Баланс DeepSeek \$$bal — резерв Йоды и поисковые субагенты на deepseek-flash скоро встанут (402). Пополнить: platform.deepseek.com"
+    [ "$st" = "ok" ] && [ "$dprev" = "low" ] && say "✅ Баланс DeepSeek пополнен: \$$bal"
+  fi
+fi
+
+exit 0

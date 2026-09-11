@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """yoda-models excash|deepseek [--no-restart] — переключить модели ОБОИХ Йод (openclaw, yoda2) и пины кронов.
 excash: основная gpt-6-astra (272k), резервы astra-1m → sol-1m → gemini-3.8-flash → … → DeepSeek V4.1 Flash;
-        дешёвое — gemini-3.8-flash, субагенты — Luna 1M.
+        дешёвое — gemini-3.8-flash, субагенты — Luna 1M (поисковых Astra по своему выбору пускает на DeepSeek V4.1 Flash).
 deepseek: ВСЯ Йода на DeepSeek V4.1 Flash (id deepseek-flash: 1M контекста, 240 ток/с, картинки, ~10-20× дешевле
         Astra за счёт кэша префикса). Когда excash лежит/ключ отозван или хочется сэкономить. Ничего из excash
         в цепочке (чтобы не ловить бан IP). Рассуждения выключены (thinkingDefault off): с ними DeepSeek тратит
@@ -17,11 +17,15 @@ PROFILES = {
                "fallbacks": ["excash/gpt-6-astra-1m", "excash/gpt-5.6-sol-1m", "excash/gemini-3.8-flash",
                              "excash/gpt-5.6-sol-1m-fast", "excash/gemini-3.7-flash-tiered", "dseek/deepseek-flash"],
                "cheap": "excash/gemini-3.8-flash", "brief": "excash/gpt-6-astra-1m", "heartbeat": "excash/gemini-3.8-flash",
-               "subagents": "excash/gpt-5.6-luna-1m", "think": "adaptive"},   # субагенты: Luna 1M (рассуждает, 1M контекста) — по наблюдениям из практики лучше на многошаговых задачах; Spark — конвейеры
+               # субагенты по умолчанию — Luna 1M (рассуждает); для поиска/сбора источников Astra сама запускает
+               # sessions_spawn с model dseek/deepseek-flash и thinking off (241 ток/с против 58, в разы дешевле) —
+               # правило в AGENTS.md «💸 Модели». DeepSeek здесь же резерв, если Luna недоступна.
+               "subagents": {"primary": "excash/gpt-5.6-luna-1m", "fallbacks": ["dseek/deepseek-flash"]},
+               "think": "adaptive"},   # субагенты: Luna 1M (рассуждает, 1M контекста) — по наблюдениям из практики лучше на многошаговых задачах; Spark — конвейеры
     # deepseek-v4-pro с 14.09.2026 сам перенаправляется на V4.1 Flash — отдельной «про» больше нет
     "deepseek": {"primary": "dseek/deepseek-flash", "fallbacks": [],
                  "cheap": "dseek/deepseek-flash", "brief": "dseek/deepseek-flash", "heartbeat": "dseek/deepseek-flash",
-                 "subagents": "dseek/deepseek-flash", "think": "off"},
+                 "subagents": "dseek/deepseek-flash", "subthink": "off", "think": "off"},
 }
 CRON_PINS = {"openclaw": {"Утренний брифинг": "brief", "Вечерний дайджест": "cheap"}}   # по началу имени крона
 
@@ -43,6 +47,10 @@ def patch(user, prof):
         d["thinkingDefault"] = prof["think"]   # deepseek: off (рассуждения V4.1 Flash медленные и дорогие на простых репликах)
     if isinstance(d.get("subagents"), dict):
         d["subagents"]["model"] = prof.get("subagents", prof["cheap"])
+        if prof.get("subthink"):
+            d["subagents"]["thinking"] = prof["subthink"]   # off: у DeepSeek рассуждения съедают 5-11 тыс. токенов и 20-45 с
+        else:
+            d["subagents"].pop("thinking", None)
     if isinstance(d.get("compaction"), dict) and "model" in d["compaction"]:
         d["compaction"]["model"] = prof["cheap"]
     if isinstance(d.get("compaction", {}).get("memoryFlush"), dict) and "model" in d["compaction"]["memoryFlush"]:
