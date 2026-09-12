@@ -25,6 +25,9 @@ import requests
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import sci  # noqa: E402  (llm-вызов, Europe PMC, Gmail-алерты, полнотекст)
+import lang    # noqa: E402  вычитка русского языка
+import biblio  # noqa: E402  библиография Vancouver из Europe PMC
+import web     # noqa: E402  вёрстка страницы (палитра сайта владельца)
 
 HOME = os.path.expanduser("~")
 WS = f"{HOME}/.openclaw/workspace"
@@ -313,6 +316,9 @@ def links_of(a):
 
 # ---------- Word ----------
 def build_docx(brief, path):
+    """Word в палитре docsemenov.ru: кремовый фон карточек, коралловый акцент, бирюзовый
+    для «что это значит». Слева поле с идентификатором, значимостью и уровнем доказательности,
+    первой строкой — библиографическая ссылка."""
     from docx import Document
     from docx.enum.table import WD_TABLE_ALIGNMENT
     from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -321,178 +327,291 @@ def build_docx(brief, path):
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
     from docx.shared import Cm, Pt, RGBColor
 
-    NAVY, TEAL, GREY, LIGHT, LINE = "1F3A5F", "2A9D8F", "6B7280", "F4F6F9", "D9DEE5"
-    RATING_FILL = {"fire": "FDE8E8", "star": "FFF4D6", "pin": "E8F1FB", "none": "EEEEEE"}
-    RATING_TXT = {"fire": "B42318", "star": "8A5A00", "pin": "1F4E79", "none": "6B7280"}
+    PAPER, INK, INK2, MUTED = "FFF9F2", "2B2330", "4A4051", "7A6E80"
+    CORAL, TEAL, LINE, LINE2 = "E85D3C", "0B8570", "E4D3C4", "F0E2D6"
+    PEACH, MINT, SKY, LEMON = "FFE9DC", "DDF4EC", "E3EEFF", "FFF3D6"
+    SERIF, SANS, MONO = "Georgia", "Calibri", "Consolas"
+    RATING_FILL = {"fire": PEACH, "star": LEMON, "pin": SKY, "none": LINE2}
+    RATING_TXT = {"fire": CORAL, "star": "A0660A", "pin": "2B51C4", "none": MUTED}
 
     doc = Document()
     sec = doc.sections[0]
     sec.page_width, sec.page_height = Cm(21), Cm(29.7)
-    sec.left_margin = sec.right_margin = Cm(1.7)
-    sec.top_margin, sec.bottom_margin = Cm(1.6), Cm(1.5)
+    sec.left_margin = sec.right_margin = Cm(1.6)
+    sec.top_margin, sec.bottom_margin = Cm(1.5), Cm(1.4)
     normal = doc.styles["Normal"]
-    normal.font.name, normal.font.size = "Calibri", Pt(10.5)
-    normal.element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
+    normal.font.name, normal.font.size = SERIF, Pt(10)
+    normal.font.color.rgb = RGBColor.from_string(INK)
+    normal.element.rPr.rFonts.set(qn("w:eastAsia"), SERIF)
     normal.paragraph_format.space_after = Pt(2)
-    for lvl, size in ((1, 16), (2, 12.5)):
-        st = doc.styles[f"Heading {lvl}"]
-        st.font.name, st.font.size, st.font.bold = "Calibri", Pt(size), True
-        st.font.color.rgb = RGBColor.from_string(NAVY)
-        st.element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
-        st.paragraph_format.space_before, st.paragraph_format.space_after = Pt(10 if lvl == 1 else 6), Pt(4)
+
+    def xml(tag, **kw):
+        el = OxmlElement(tag)
+        for k, v in kw.items():
+            el.set(qn(f"w:{k}"), str(v))
+        return el
 
     def shade(cell, fill):
-        tcPr = cell._tc.get_or_add_tcPr()
-        shd = OxmlElement("w:shd"); shd.set(qn("w:val"), "clear"); shd.set(qn("w:color"), "auto"); shd.set(qn("w:fill"), fill)
-        tcPr.append(shd)
+        cell._tc.get_or_add_tcPr().append(xml("w:shd", val="clear", color="auto", fill=fill))
 
-    def borders(table, color, sz=4):
-        tblPr = table._tbl.tblPr
+    def no_borders(table):
         b = OxmlElement("w:tblBorders")
         for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
-            el = OxmlElement(f"w:{edge}"); el.set(qn("w:val"), "single"); el.set(qn("w:sz"), str(sz)); el.set(qn("w:color"), color)
-            b.append(el)
-        tblPr.append(b)
+            b.append(xml(f"w:{edge}", val="none", sz=0, color="auto"))
+        table._tbl.tblPr.append(b)
 
-    def cell_pad(table, w=110):
-        tblPr = table._tbl.tblPr
+    def cell_pad(table, w=120):
         mar = OxmlElement("w:tblCellMar")
         for side in ("top", "left", "bottom", "right"):
-            el = OxmlElement(f"w:{side}"); el.set(qn("w:w"), str(w if side in ("left", "right") else w // 2)); el.set(qn("w:type"), "dxa")
-            mar.append(el)
-        tblPr.append(mar)
+            mar.append(xml(f"w:{side}", w=(w if side in ("left", "right") else w // 2), type="dxa"))
+        table._tbl.tblPr.append(mar)
 
-    def badge(par, text, fill, color=NAVY, size=8.5):
-        run = par.add_run(f" {text} ")
-        run.font.size, run.font.bold = Pt(size), True
-        run.font.color.rgb = RGBColor.from_string(color)
-        rPr = run._r.get_or_add_rPr()
-        shd = OxmlElement("w:shd"); shd.set(qn("w:val"), "clear"); shd.set(qn("w:color"), "auto"); shd.set(qn("w:fill"), fill)
-        rPr.append(shd)
-        par.add_run("  ")
+    def rule(par, color=LINE, sz=6, edge="top", space=8):
+        pPr = par._p.get_or_add_pPr()
+        b = pPr.find(qn("w:pBdr")) or OxmlElement("w:pBdr")
+        b.append(xml(f"w:{edge}", val="single", sz=sz, space=space, color=color))
+        pPr.append(b)
 
-    def link(par, url, text, color="1F4E79"):
-        r_id = par.part.relate_to(url, RT.HYPERLINK, is_external=True)
-        h = OxmlElement("w:hyperlink"); h.set(qn("r:id"), r_id)
+    def run(par, text, font=SERIF, size=10, color=INK, bold=False, italic=False, caps=False, space=0):
+        r = par.add_run(text.upper() if caps else text)
+        r.font.name, r.font.size, r.font.bold, r.font.italic = font, Pt(size), bold, italic
+        r.font.color.rgb = RGBColor.from_string(color)
+        r._r.get_or_add_rPr().rFonts.set(qn("w:eastAsia"), font)
+        if space:
+            r._r.get_or_add_rPr().append(xml("w:spacing", val=space))
+        return r
+
+    def badge(par, text, fill, color=INK, size=8, font=SANS):
+        r = run(par, f" {text} ", font=font, size=size, color=color, bold=True)
+        r._r.get_or_add_rPr().append(xml("w:shd", val="clear", color="auto", fill=fill))
+        par.add_run(" ")
+
+    def link(par, url, text, color=CORAL, size=9):
+        rid = par.part.relate_to(url, RT.HYPERLINK, is_external=True)
+        h = xml("w:hyperlink", **{})
+        h.set(qn("r:id"), rid)
         r = OxmlElement("w:r"); rPr = OxmlElement("w:rPr")
-        c = OxmlElement("w:color"); c.set(qn("w:val"), color); rPr.append(c)
-        u = OxmlElement("w:u"); u.set(qn("w:val"), "single"); rPr.append(u)
-        sz = OxmlElement("w:sz"); sz.set(qn("w:val"), "19"); rPr.append(sz)
-        r.append(rPr); t = OxmlElement("w:t"); t.text = text; t.set(qn("xml:space"), "preserve"); r.append(t)
+        rPr.append(xml("w:rFonts", ascii=SANS, hAnsi=SANS))
+        rPr.append(xml("w:color", val=color)); rPr.append(xml("w:u", val="single"))
+        rPr.append(xml("w:sz", val=int(size * 2)))
+        r.append(rPr)
+        t = OxmlElement("w:t"); t.text = text; t.set(qn("xml:space"), "preserve"); r.append(t)
         h.append(r); par._p.append(h)
 
-    def labeled(cell, label, text, color=NAVY):
+    def labeled(cell, label, text, color=MUTED, val_color=INK):
         text = _flat(text)
         if not text.strip():
             return
-        p = cell.add_paragraph()
-        r = p.add_run(label + " "); r.bold = True; r.font.color.rgb = RGBColor.from_string(color); r.font.size = Pt(10)
-        p.add_run(text.strip())
+        p = cell.add_paragraph(); p.paragraph_format.space_before = Pt(5)
+        run(p, label + "  ", font=SANS, size=7.5, color=color, bold=True, caps=True, space=12)
+        run(p, text.strip(), size=10, color=val_color)
 
-    def card(a, compact=False):
-        t = doc.add_table(rows=1, cols=1); t.alignment = WD_TABLE_ALIGNMENT.CENTER
-        borders(t, LINE); cell_pad(t)
-        c = t.rows[0].cells[0]; shade(c, LIGHT)
+    def rail_cell(c, a, s):
         p = c.paragraphs[0]
-        badge(p, a["id"], NAVY, "FFFFFF", 9)
-        r = p.add_run(_flat(a.get("ru")) or _flat(a.get("en")) or "?"); r.bold = True; r.font.size = Pt(12); r.font.color.rgb = RGBColor.from_string("111827")
-        if a.get("en") and a.get("ru") and a["en"].strip().lower() != a["ru"].strip().lower():
-            pe = c.add_paragraph(); re_ = pe.add_run(a["en"]); re_.italic = True; re_.font.size = Pt(9); re_.font.color.rgb = RGBColor.from_string(GREY)
-        pb = c.add_paragraph()
+        badge(p, a["id"], PEACH, INK, 8, MONO)
         rt = a.get("rating", "none")
-        badge(pb, f"{RATING_ICON.get(rt, '')} {RATING_WORD.get(rt, '')}", RATING_FILL[rt], RATING_TXT[rt])
-        meta = " · ".join(x for x in [a.get("journal"), str(a.get("year") or ""), a.get("pubtype")] if x)
+        p2 = c.add_paragraph(); p2.paragraph_format.space_before = Pt(3)
+        badge(p2, RATING_WORD.get(rt, ""), RATING_FILL[rt], RATING_TXT[rt], 7.5)
+        tier = web.tier_of(s) if s else ""
+        if tier:
+            p3 = c.add_paragraph(); p3.paragraph_format.space_before = Pt(5)
+            run(p3, "уровень", font=SANS, size=6.5, color=MUTED, caps=True, space=14)
+            p4 = c.add_paragraph(); p4.paragraph_format.space_before = Pt(1)
+            for t in ("I", "II", "III", "IV"):
+                on = t == tier
+                badge(p4, t, TEAL if on else LINE2, "FFFFFF" if on else MUTED, 7, MONO)
+
+    def card(a, full=True):
+        s = _norm_summary(a.get("summary") or {})
+        t = doc.add_table(rows=1, cols=2); t.alignment = WD_TABLE_ALIGNMENT.CENTER
+        no_borders(t); cell_pad(t, 0)
+        t.columns[0].width, t.columns[1].width = Cm(3.1), Cm(14.6)
+        rail, c = t.rows[0].cells
+        rail.width, c.width = Cm(3.1), Cm(14.6)
+        rail_cell(rail, a, s)
+        p = c.paragraphs[0]
+        run(p, _flat(a.get("ru")) or _flat(a.get("en")) or "?", size=12.5, bold=True, color=INK)
+        if a.get("en") and (a.get("ru") or "").strip().lower() != a["en"].strip().lower():
+            pe = c.add_paragraph(); run(pe, a["en"], size=8.5, italic=True, color=MUTED)
+        if a.get("cite"):
+            pc = c.add_paragraph()
+            pc.paragraph_format.space_before = Pt(6); pc.paragraph_format.left_indent = Cm(0.35)
+            rule(pc, CORAL, 12, "left", 6)
+            run(pc, a["cite"], font=MONO, size=7.5, color=INK2)
+        meta = " · ".join(x for x in [a.get("journal_abbr") or a.get("journal"),
+                                      str(a.get("year") or ""), a.get("pubtype")] if x)
+        pm = c.add_paragraph(); pm.paragraph_format.space_before = Pt(5)
         if meta:
-            badge(pb, meta, "E5E7EB", "374151")
+            run(pm, meta + "   ", font=SANS, size=8, color=MUTED)
         src = a.get("summary_src") or ""
         if src:
-            badge(pb, src, "DCFCE7" if "полный" in src else "FEF3C7", "14532D" if "полный" in src else "78350F")
+            badge(pm, f"по {src}", MINT if "полный" in src else LEMON,
+                  TEAL if "полный" in src else "A0660A", 7)
         elif a.get("oa"):
-            badge(pb, "open access", "DCFCE7", "14532D")
-        s = _norm_summary(a.get("summary") or {})
-        labeled(c, "Коротко:", s.get("tldr", ""))
-        if not compact:
-            labeled(c, "Дизайн:", " — ".join(x for x in [s.get("design", ""), s.get("n", "")] if x))
+            badge(pm, "открытый доступ", MINT, TEAL, 7)
+        labeled(c, "Коротко", s.get("tldr", ""))
+        if full:
+            labeled(c, "Дизайн", " — ".join(x for x in [s.get("design", ""),
+                    re.sub(r"^who:\s*", "", str(s.get("n") or ""))] if x))
             if s.get("findings"):
-                pf = c.add_paragraph(); rf = pf.add_run("Что нашли:"); rf.bold = True; rf.font.color.rgb = RGBColor.from_string(NAVY); rf.font.size = Pt(10)
-                for f in s["findings"][:6]:
-                    pi = c.add_paragraph(); pi.paragraph_format.left_indent = Cm(0.4); pi.add_run("• " + str(f).strip())
-            labeled(c, "Что это значит:", s.get("meaning", ""), TEAL)
-            labeled(c, "Доказательность:", s.get("evidence", ""))
-            labeled(c, "Оговорка:", s.get("caveat", ""), "B42318")
+                pf = c.add_paragraph(); pf.paragraph_format.space_before = Pt(5)
+                run(pf, "Что нашли", font=SANS, size=7.5, color=MUTED, bold=True, caps=True, space=12)
+                for f in s["findings"][:8]:
+                    pi = c.add_paragraph(); pi.paragraph_format.left_indent = Cm(0.45)
+                    pi.paragraph_format.space_after = Pt(1)
+                    run(pi, "• " + str(f).strip(), size=9.5)
+            labeled(c, "Что это значит", s.get("meaning", ""), MUTED, TEAL)
+            labeled(c, "Доказательность", s.get("evidence", ""))
+            labeled(c, "Оговорка", s.get("caveat", ""), CORAL, INK2)
         elif s.get("meaning"):
-            labeled(c, "Что это значит:", s.get("meaning", ""), TEAL)
+            labeled(c, "Что это значит", s.get("meaning", ""), MUTED, TEAL)
         if a.get("why"):
-            labeled(c, "Зачем вам:", _flat(a["why"]), TEAL)
-        pl = c.add_paragraph()
-        L = links_of(a)
-        for i, (name, url) in enumerate(L.items()):
+            labeled(c, "Зачем вам", _flat(a["why"]), MUTED, TEAL)
+        pl = c.add_paragraph(); pl.paragraph_format.space_before = Pt(6)
+        for i, (name, url) in enumerate(links_of(a).items()):
             if i:
-                pl.add_run("  ·  ").font.color.rgb = RGBColor.from_string(GREY)
-            link(pl, url, name + " ↗")
+                run(pl, "   ", font=SANS, size=9, color=MUTED)
+            link(pl, url, name)
         if a.get("source"):
-            rs = pl.add_run(f"   ({a['source']})"); rs.font.size = Pt(8.5); rs.font.color.rgb = RGBColor.from_string(GREY)
-        pa = c.add_paragraph()
-        ra = pa.add_run(f"Спросить Йоду: «разбери {a['id']}» — полный Word-разбор; «что там с выборкой в {a['id']}» — уточнение по карточке.")
-        ra.italic = True; ra.font.size = Pt(8.5); ra.font.color.rgb = RGBColor.from_string(GREY)
-        doc.add_paragraph().paragraph_format.space_after = Pt(4)
+            run(pl, f"    {a['source']}", font=SANS, size=7.5, color=MUTED)
+        sp = doc.add_paragraph(); sp.paragraph_format.space_after = Pt(7)
+        rule(sp, LINE2, 4, "bottom", 6)
 
-    # колонтитулы
-    hp = sec.header.paragraphs[0]; hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    hr = hp.add_run(f"Научный бриф · {brief['date_ru']} · ассистент для владельца"); hr.font.size = Pt(8.5); hr.font.color.rgb = RGBColor.from_string(GREY)
+    def heading(eyebrow, title, note):
+        pe = doc.add_paragraph()
+        pe.paragraph_format.space_before = Pt(16); pe.paragraph_format.space_after = Pt(2)
+        rule(pe, INK, 8, "top", 10)
+        run(pe, eyebrow, font=SANS, size=7, color=CORAL, bold=True, caps=True, space=20)
+        pt = doc.add_paragraph(); pt.paragraph_format.space_after = Pt(2)
+        run(pt, title, size=16, bold=True, color=INK)
+        if note:
+            pn = doc.add_paragraph(); pn.paragraph_format.space_after = Pt(8)
+            run(pn, note, font=SANS, size=8.5, color=MUTED)
+
+    # ---- колонтитулы
+    hp = sec.header.paragraphs[0]
+    run(hp, f"Научный бриф · {brief['date_ru']} · детская травматология и ортопедия",
+        font=SANS, size=8, color=MUTED)
     fp = sec.footer.paragraphs[0]; fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    fr = fp.add_run("Стр. "); fr.font.size = Pt(8.5); fr.font.color.rgb = RGBColor.from_string(GREY)
-    fld = OxmlElement("w:fldSimple"); fld.set(qn("w:instr"), "PAGE"); r_ = OxmlElement("w:r"); t_ = OxmlElement("w:t"); t_.text = "1"; r_.append(t_); fld.append(r_); fp._p.append(fld)
+    run(fp, "Стр. ", font=SANS, size=8, color=MUTED)
+    fld = OxmlElement("w:fldSimple"); fld.set(qn("w:instr"), "PAGE")
+    fp._p.append(fld)
 
-    # обложка
-    cover = doc.add_table(rows=1, cols=1); borders(cover, NAVY, 2); cell_pad(cover, 220)
-    cc = cover.rows[0].cells[0]; shade(cc, NAVY)
-    p = cc.paragraphs[0]; r = p.add_run("НАУЧНЫЙ БРИФ"); r.bold = True; r.font.size = Pt(26); r.font.color.rgb = RGBColor.from_string("FFFFFF")
-    p2 = cc.add_paragraph(); r2 = p2.add_run(brief["date_ru"]); r2.font.size = Pt(13); r2.font.color.rgb = RGBColor.from_string("CFE3F3")
-    p3 = cc.add_paragraph(); r3 = p3.add_run("Что вышло по детской травматологии и ортопедии: письма-алерты из ваших подписок и свежие публикации в Europe PMC, каждая — с выжимкой, ссылками и ID для вопросов."); r3.font.size = Pt(10); r3.font.color.rgb = RGBColor.from_string("E5EEF7")
+    # ---- шапка
+    mast = doc.add_table(rows=1, cols=1); no_borders(mast); cell_pad(mast, 170)
+    mc = mast.rows[0].cells[0]; shade(mc, PAPER)
+    p = mc.paragraphs[0]
+    run(p, "Детская травматология и ортопедия · ежедневный обзор",
+        font=SANS, size=7.5, color=CORAL, bold=True, caps=True, space=20)
+    p1 = mc.add_paragraph(); p1.paragraph_format.space_before = Pt(6)
+    run(p1, "Научный бриф", size=27, bold=True, color=INK)
+    p2 = mc.add_paragraph(); run(p2, brief["date_ru"], font=SANS, size=11, color=INK2)
+    p3 = mc.add_paragraph(); p3.paragraph_format.space_before = Pt(6)
+    run(p3, "Что вышло за сутки: письма-алерты из подписок и свежие публикации в Europe PMC. "
+            "Каждая статья — с библиографической ссылкой, выжимкой по первоисточнику, "
+            "уровнем доказательности и оговорками.", size=10, color=INK2)
     st = brief["stats"]
-    stats = doc.add_table(rows=2, cols=4); stats.alignment = WD_TABLE_ALIGNMENT.CENTER; borders(stats, LINE); cell_pad(stats, 90)
-    for i, (num, lab) in enumerate([(st["mails"], "писем-алертов"), (st["articles"], "статей в письмах"),
-                                     (st["relevant"], "релевантных"), (st["fresh"], "свежих в базах")]):
-        c0, c1 = stats.rows[0].cells[i], stats.rows[1].cells[i]; shade(c0, LIGHT); shade(c1, LIGHT)
-        c0.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER; rn = c0.paragraphs[0].add_run(str(num)); rn.bold = True; rn.font.size = Pt(20); rn.font.color.rgb = RGBColor.from_string(TEAL if i in (2, 3) else NAVY)
-        c1.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER; rl = c1.paragraphs[0].add_run(lab); rl.font.size = Pt(9); rl.font.color.rgb = RGBColor.from_string(GREY)
-    doc.add_paragraph()
+    p4 = mc.add_paragraph(); p4.paragraph_format.space_before = Pt(8)
+    for num, lab in ((st["mails"], "писем-алертов"), (st["articles"], "статей в письмах"),
+                     (st["relevant"], "релевантных"), (st["fresh"], f"свежих за {brief['fresh_days']} дн.")):
+        run(p4, str(num), font=SANS, size=11, bold=True, color=INK)
+        run(p4, f" {lab}      ", font=SANS, size=8.5, color=MUTED)
+    p5 = mc.add_paragraph(); p5.paragraph_format.space_before = Pt(7)
+    p5.paragraph_format.left_indent = Cm(0.3); rule(p5, LINE, 10, "left", 6)
+    run(p5, "Выжимки составлены по аннотациям и открытым полным текстам; цифры перенесены "
+            "из первоисточника без пересчёта. Проверка расхождений — по ссылке DOI.",
+        font=SANS, size=8, color=MUTED)
 
     top = brief["top"]
+    top_ids = {a["id"] for a in top}
     if top:
-        doc.add_heading("Главное за сутки", 1)
+        heading("Отобрано редактором", "Главное за сутки",
+                "Три работы, которые ближе всего к практике детского травматолога-ортопеда.")
         for a in top:
             card(a)
-    rel = [a for a in brief["mail_articles"] if a["rating"] != "none" and a not in top]
+    rel = [a for a in brief["mail_articles"] if a["rating"] != "none" and a["id"] not in top_ids]
     if rel:
-        doc.add_heading("Ещё релевантное из ваших подписок", 1)
+        heading("Из ваших подписок", "Ещё релевантное",
+                "Статьи из писем-алертов, прошедшие отбор по теме.")
         for a in rel:
             card(a)
-    fresh = [a for a in brief["fresh"] if a not in top]
+    fresh = [a for a in brief["fresh"] if a["id"] not in top_ids]
     if fresh:
-        doc.add_heading(f"Свежее в базах (Europe PMC, {brief['fresh_days']} дн.)", 1)
+        heading(f"Europe PMC · {brief['fresh_days']} дней", "Свежее в базах",
+                "Найдено поиском по профилю, вне писем. Короткий формат: суть и значение.")
         for a in fresh:
-            card(a, compact=True)
+            card(a, full=False)
     rest = [a for a in brief["mail_articles"] if a["rating"] == "none"]
     if rest:
-        doc.add_heading("Остальное из писем — не по вашей теме", 1)
-        t = doc.add_table(rows=1, cols=2); borders(t, LINE); cell_pad(t, 80)
-        h0, h1 = t.rows[0].cells; shade(h0, "E5E7EB"); shade(h1, "E5E7EB")
-        h0.paragraphs[0].add_run("Статья").bold = True; h1.paragraphs[0].add_run("Журнал").bold = True
+        heading("Не по профилю", "Остальное из писем",
+                f"{len(rest)} статей из тех же выпусков — вне детской ортопедии и травмы.")
+        t = doc.add_table(rows=1, cols=2); no_borders(t); cell_pad(t, 80)
+        h0, h1 = t.rows[0].cells
+        run(h0.paragraphs[0], "Статья", font=SANS, size=7.5, color=MUTED, bold=True, caps=True, space=12)
+        run(h1.paragraphs[0], "Журнал", font=SANS, size=7.5, color=MUTED, bold=True, caps=True, space=12)
         for a in rest:
             row = t.add_row().cells
-            row[0].paragraphs[0].add_run(a.get("ru") or a.get("en") or "").font.size = Pt(9.5)
-            row[1].paragraphs[0].add_run(" ".join(x for x in [a.get("journal"), str(a.get("year") or "")] if x)).font.size = Pt(9.5)
+            run(row[0].paragraphs[0], a.get("ru") or a.get("en") or "", size=9)
+            run(row[1].paragraphs[0], a.get("journal_abbr") or a.get("journal") or "",
+                font=SANS, size=8, color=MUTED)
     if brief["stats"]["mails"] == 0:
-        p = doc.add_paragraph(); r = p.add_run("Научных писем за сутки в Gmail не было — бриф собран только из свежего в базах."); r.italic = True
-    doc.add_heading("Как пользоваться", 1)
-    for line in ("Каждая статья имеет ID вида S-MMDD-NN. Напишите Йоде «разбери S-0907-03» — получите полный Word-разбор статьи (по открытому полному тексту, если он есть, иначе по аннотации).",
-                 "Вопрос по конкретной статье — «что там с выборкой в S-0907-03», «какие ограничения у S-0907-01» — Йода ответит по карточке и первоисточнику.",
-                 "Ссылки DOI/PubMed кликабельны; ссылку можно переслать Йоде — он поймёт, о какой статье речь.",
-                 "Платная статья — пришлите PDF в чат, Йода сделает разбор по нему (sci.py word --pdf)."):
-        p = doc.add_paragraph(style="List Bullet"); p.add_run(line).font.size = Pt(9.5)
+        p = doc.add_paragraph()
+        run(p, "Научных писем за сутки в Gmail не было — бриф собран только из свежего в базах.",
+            italic=True, color=MUTED)
+    heading("Справка", "Как пользоваться", "")
+    for line in ("У каждой статьи есть идентификатор вида S-MMDD-NN — по нему можно запросить полный "
+                 "разбор работы или уточнение по выборке и ограничениям.",
+                 "Уровень доказательности слева проставлен по дизайну исследования; где авторы указали "
+                 "его сами, берётся авторский.",
+                 "Ссылки DOI и PubMed кликабельны; ссылку можно переслать — по ней статья опознаётся.",
+                 "Платная статья — пришлите PDF, разбор будет сделан по нему."):
+        p = doc.add_paragraph(); p.paragraph_format.left_indent = Cm(0.45)
+        p.paragraph_format.space_after = Pt(2)
+        run(p, "• " + line, size=9.5, color=INK2)
+    ph = doc.add_paragraph(); ph.paragraph_format.space_before = Pt(10)
+    run(ph, "Как цитировать этот обзор", font=SANS, size=7.5, color=MUTED, bold=True, caps=True, space=12)
+    pc = doc.add_paragraph(); pc.paragraph_format.left_indent = Cm(0.3)
+    rule(pc, LINE, 10, "left", 6)
+    run(pc, f"Научный бриф по детской травматологии и ортопедии за {brief['date_ru'].split(',')[0]} "
+            f"[Электронный ресурс]. Дата обращения: {brief['date_short']}.{brief['date'][:4]}.",
+        font=MONO, size=7.5, color=INK2)
     doc.save(path)
+
+
+def build_html(brief, path):
+    """Та же вёрстка для блога: одна страница, палитра сайта, тёмная тема по системе."""
+    open(path, "w", encoding="utf-8").write(
+        "<!doctype html>\n<html lang=\"ru\">\n<head>\n<meta charset=\"utf-8\">\n"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+        + web.render(brief) + "\n</html>")
+
+
+CHROME = "/opt/chrome-full/chrome-linux64/chrome"
+
+
+def build_pdf(html_path, pdf_path):
+    """PDF печатается из ТОЙ ЖЕ страницы — Word и PDF не разъезжаются по дизайну.
+    Возвращает путь или None: не собрался PDF — бриф уйдёт вордовским файлом."""
+    import urllib.parse
+    if not os.path.exists(CHROME):
+        log("PDF: браузер не найден, отправлю Word")
+        return None
+    try:
+        r = subprocess.run(
+            [CHROME, "--headless=new", "--disable-gpu", "--no-sandbox", "--no-first-run",
+             "--hide-scrollbars", "--disable-dev-shm-usage",
+             "--virtual-time-budget=25000",          # ждём веб-шрифты, иначе текст поедет
+             "--run-all-compositor-stages-before-draw",
+             "--no-pdf-header-footer", f"--print-to-pdf={pdf_path}",
+             "file://" + urllib.parse.quote(html_path)],
+            capture_output=True, text=True, timeout=300)
+    except Exception as e:
+        log(f"PDF: {type(e).__name__} — отправлю Word")
+        return None
+    if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) < 20000:
+        log(f"PDF не собрался ({r.stderr[-160:] if r.stderr else 'пусто'}) — отправлю Word")
+        return None
+    return pdf_path
 
 
 # ---------- сводка для утреннего брифа и Telegram ----------
@@ -587,18 +706,41 @@ def cmd_run(a):
              "stats": {"mails": len(mails), "articles": len(mail_articles),
                        "relevant": sum(1 for x in mail_articles if x["rating"] != "none"), "fresh": len(fresh)},
              "sent_at": ""}
+    log("библиография…")
+    all_arts = mail_articles + fresh + brief["top"]
+    biblio.enrich([x for x in all_arts if x.get("pmid") or x.get("doi")], log)
+    # одна статья может лежать двумя объектами (в top — копия после архива), а Europe PMC
+    # отвечает на идентификатор один раз: раздаём дополненные поля всем тёзкам по ID
+    donor = {a["id"]: a for a in all_arts if a.get("id") and a.get("journal_abbr")}
+    for art in all_arts:
+        src = donor.get(art.get("id"))
+        if src is not None and src is not art:
+            for k in ("journal_abbr", "volume", "issue", "pages", "pubdate", "issn", "authors"):
+                if src.get(k):
+                    art[k] = src[k]
+        art["cite"] = biblio.vancouver(art)
+    log("вычитка языка…")
+    lang.pass_brief(brief, lang.make_llm(
+        lambda p: ask_json(p, kind="object", max_tokens=6000, temperature=0.1)), log)
     os.makedirs(ARCHIVE, exist_ok=True); os.makedirs(OUT_DIR, exist_ok=True)
     docx_path = os.path.join(OUT_DIR, f"Научный_бриф_{date_iso}.docx")
     build_docx(brief, docx_path)
     log(f"Word: {docx_path} ({os.path.getsize(docx_path) // 1024} КБ)")
+    html_path = os.path.join(OUT_DIR, f"Научный_бриф_{date_iso}.html")
+    build_html(brief, html_path)
+    log(f"страница для блога: {html_path} ({os.path.getsize(html_path) // 1024} КБ)")
+    pdf_path = build_pdf(html_path, os.path.join(OUT_DIR, f"Научный_бриф_{date_iso}.pdf"))
+    if pdf_path:
+        log(f"PDF: {pdf_path} ({os.path.getsize(pdf_path) // 1024} КБ)")
     if a.send:
         st = brief["stats"]
-        if send(tg_text(brief), docx_path, f"Научный бриф {brief['date_short']}: {st['relevant'] + st['fresh']} статей с выжимками"):
+        if send(tg_text(brief), pdf_path or docx_path,
+                f"Научный бриф {brief['date_short']}: {st['relevant'] + st['fresh']} статей с выжимками"):
             brief["sent_at"] = dt.datetime.now(MSK).strftime("%H:%M")
     json.dump(brief, open(os.path.join(ARCHIVE, f"{date_iso}.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     json.dump(brief, open(os.path.join(ARCHIVE, "latest.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     write_txt(brief, docx_path)
-    print(json.dumps({"date": date_iso, **brief["stats"], "top": [x["id"] for x in top], "docx": docx_path,
+    print(json.dumps({"date": date_iso, **brief["stats"], "top": [x["id"] for x in top], "docx": docx_path, "html": html_path, "pdf": pdf_path,
                       "sent": brief["sent_at"] or None}, ensure_ascii=False))
 
 
