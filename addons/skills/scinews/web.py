@@ -31,6 +31,18 @@ def tier_of(s):
     return ""
 
 
+def src_label(src):
+    """«по аннотации», а не «по аннотация»: предложный падеж для плашки."""
+    s = (src or "").lower()
+    if "полн" in s:
+        return "по полному тексту"
+    if "аннотац" in s:
+        return "по аннотации"
+    if "описан" in s:
+        return "по описанию из письма"
+    return "по " + (src or "")
+
+
 def esc(x): return html.escape(str(x or ""), quote=True)
 
 def links(a):
@@ -60,7 +72,13 @@ def entry(a, full=True):
     meta = " · ".join(x for x in [a.get("journal_abbr") or a.get("journal"),
                                   str(a.get("year") or ""), a.get("pubtype")] if x)
     src = a.get("summary_src") or ""
-    src_b = (f'<span class="src {"full" if "полный" in src else "abs"}">по {esc(src)}</span>') if src else ""
+    lab = src_label(src)
+    if src and a.get("ft_url"):      # открытый полный текст — даём на него ссылку прямо с плашки
+        src_b = f'<a class="src full" href="{esc(a["ft_url"])}" target="_blank" rel="noopener">{esc(lab)}</a>'
+    elif src:
+        src_b = f'<span class="src {"full" if "полный" in src else "abs"}">{esc(lab)}</span>'
+    else:
+        src_b = ""
     oa = '<span class="src oa">открытый доступ</span>' if a.get("oa") else ""
     en = (f'<p class="en">{esc(a.get("en"))}</p>'
           if a.get("en") and a.get("en", "").strip().lower() != (a.get("ru") or "").strip().lower() else "")
@@ -111,7 +129,7 @@ def render(b, author=""):   # имя владельца подставляетс
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,400;7..72,600;7..72,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
 :root{{
-  /* палитра взята из style.css сайта владельца: bg, peach, mint, sky, lemon, coral, teal, blue, ink, line */
+  /* палитра из style.css сайта владельца: bg, peach, mint, sky, lemon, coral, teal, blue, ink, line */
   --paper:#FFF9F2; --surface:#FFFFFF; --ink:#2B2330; --ink2:#4A4051; --ink3:#7A6E80;
   --rule:#E4D3C4; --rule2:#F0E2D6; --accent:#E85D3C; --accent-soft:#FFE9DC;
   --teal:#0B8570; --teal-soft:#DDF4EC;

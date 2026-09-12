@@ -21,13 +21,14 @@ import sys
 import time
 
 import requests
+from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import sci  # noqa: E402  (llm-вызов, Europe PMC, Gmail-алерты, полнотекст)
 import lang    # noqa: E402  вычитка русского языка
 import biblio  # noqa: E402  библиография Vancouver из Europe PMC
-import web     # noqa: E402  вёрстка страницы (палитра сайта владельца)
+import web     # noqa: E402  вёрстка страницы (палитра docsemenov.ru)
 
 HOME = os.path.expanduser("~")
 WS = f"{HOME}/.openclaw/workspace"
@@ -260,14 +261,46 @@ def _norm_summary(s):
     return out
 
 
-def summarize(art):
-    """Выжимка по аннотации или полному тексту (OA). Только заголовок — честно без LLM."""
-    text, src = "", ""
-    if art.get("pmcid"):
+def prefetch_fulltext(arts):
+    """Полные тексты статей открытого доступа — ПАРАЛЛЕЛЬНО (по одной это минуты).
+    Источники: Europe PMC, Crossref (знает свежие статьи раньше остальных и отдаёт
+    прямые ссылки издателя), OpenAlex, Unpaywall, Semantic Scholar, препринты, а для
+    статей со свободной лицензией — сайт издателя через doi.org."""
+    todo = [a for a in arts if a.get("doi") or a.get("pmcid")]
+    if not todo:
+        return
+
+    def one(a):
         try:
-            ft = sci._pmc_xml_text(art["pmcid"])
+            return a, sci.fetch_fulltext({**a, "isOpenAccess": "Y" if a.get("oa") else "N",
+                                          "title": a.get("en") or ""})
+        except Exception as e:
+            log(f"  полный текст {a.get('id')}: {type(e).__name__}")
+            return a, ("", "")
+
+    got = 0
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        for a, (ft, ft_src) in ex.map(one, todo):
             if ft and len(ft) > 1500:
-                text, src = ft[:45000], "полный текст (PMC)"
+                a["_ft"], a["_ft_src"] = ft, ft_src
+                got += 1
+    log(f"  полный текст добыт: {got} из {len(todo)} (у остальных закрытый доступ)")
+
+
+def summarize(art):
+    """Выжимка по полному тексту, если статья открытая; иначе по аннотации.
+    Только заголовок — честно без LLM."""
+    text, src = "", ""
+    ft, ft_src = art.pop("_ft", ""), art.pop("_ft_src", "")
+    if ft:
+        text, src = ft[:45000], "полный текст"
+        if isinstance(ft_src, str) and ft_src.startswith("http"):
+            art["ft_url"] = ft_src.split("  ")[0]
+    if not text and art.get("pmcid"):
+        try:
+            t = sci._pmc_xml_text(art["pmcid"])
+            if t and len(t) > 1500:
+                text, src = t[:45000], "полный текст"
         except Exception:
             pass
     if not text and art.get("abstract"):
@@ -280,7 +313,7 @@ def summarize(art):
                           "design": "", "n": "", "findings": [], "meaning": art.get("why", ""), "evidence": "",
                           "caveat": "Оценить можно только по названию."}
         return
-    prompt = (f"Врач-читатель: {READER}. Ниже {src} статьи «{art.get('en')}» ({art.get('journal')}, {art.get('year')}). "
+    prompt = (f"Врач-читатель: {READER}. Ниже {'полный текст' if src.startswith('полный') else src} статьи «{art.get('en')}» ({art.get('journal')}, {art.get('year')}). "
               "Сделай выжимку СТРОГО по тексту, ничего не додумывая; чего нет — пиши «не указано». "
               "Верни JSON-объект:\n"
               '{"tldr":"2-3 предложения: что сделали и что нашли, с главными цифрами",'
@@ -445,7 +478,7 @@ def build_docx(brief, path):
             run(pm, meta + "   ", font=SANS, size=8, color=MUTED)
         src = a.get("summary_src") or ""
         if src:
-            badge(pm, f"по {src}", MINT if "полный" in src else LEMON,
+            badge(pm, web.src_label(src), MINT if "полный" in src else LEMON,
                   TEAL if "полный" in src else "A0660A", 7)
         elif a.get("oa"):
             badge(pm, "открытый доступ", MINT, TEAL, 7)
@@ -692,8 +725,11 @@ def cmd_run(a):
     for art in [x for x in mail_articles if x["rating"] != "none"] + fresh + [x for x in mail_articles if x["rating"] == "none"]:
         n += 1
         art["id"] = f"{prefix}{n:02d}"
+    pool_arts = [x for x in mail_articles if x["rating"] != "none"] + fresh
+    log("полные тексты открытого доступа…")
+    prefetch_fulltext(pool_arts)
     log("выжимки…")
-    for art in [x for x in mail_articles if x["rating"] != "none"] + fresh:
+    for art in pool_arts:
         summarize(art)
         log(f"  {art['id']} {art.get('summary_src') or 'только заголовок'}")
     pool = [x for x in mail_articles if x["rating"] != "none"] + fresh
@@ -761,7 +797,7 @@ def _find(aid):
 def cmd_show(a):
     art, f = _find(a.id)
     print(f"# {art['id']} · бриф {f[:-5]}")
-    for k in ("ru", "en", "journal", "year", "authors", "pubtype", "rating", "why", "source", "doi", "pmid", "pmcid", "oa", "summary_src"):
+    for k in ("ru", "en", "journal", "year", "authors", "pubtype", "rating", "why", "source", "doi", "pmid", "pmcid", "oa", "summary_src", "ft_url"):
         if art.get(k):
             print(f"{k}: {art[k]}")
     print("links:", json.dumps(links_of(art), ensure_ascii=False))

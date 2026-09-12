@@ -126,12 +126,34 @@ def _pmc_xml_text(pmcid):
     except Exception:
         return ""
 
+def _crossref_links(doi):
+    """(ссылки издателя на полный текст, свободная ли лицензия) по Crossref.
+    Crossref знает про свежие статьи раньше Unpaywall и OpenAlex (те на статьях
+    текущего месяца отвечают 422/пусто) и отдаёт точные ссылки на PDF и HTML."""
+    try:
+        r = requests.get(f"https://api.crossref.org/works/{quote(doi, safe='/')}",
+                         headers={"User-Agent": f"SvoyVrachSci/1.0 (+mailto:{UNPAYWALL_EMAIL})"},
+                         timeout=30)
+        if r.status_code != 200:
+            return [], False
+        m = (r.json() or {}).get("message") or {}
+    except Exception:
+        return [], False
+    free = any("creativecommons.org" in (l.get("URL") or "").lower() for l in (m.get("license") or []))
+    links = [(l.get("URL"), 0 if "pdf" in (l.get("content-type") or "").lower() else 1)
+             for l in (m.get("link") or []) if l.get("URL")]
+    links.sort(key=lambda x: x[1])                    # PDF раньше HTML
+    return [u for u, _ in links], free
+
+
 def _oa_candidate_urls(doi, pmcid):
-    urls = []
+    urls, free = [], False
     if pmcid:
         urls.append(f"https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}/pdf/")
     if doi:
         d = doi.lower()
+        cr_urls, free = _crossref_links(d)
+        urls += cr_urls
         try:
             r = requests.get(f"{OPENALEX}/https://doi.org/{quote(d, safe='/:;()[]')}",
                              params={"mailto": UNPAYWALL_EMAIL}, timeout=30)
@@ -167,13 +189,20 @@ def _oa_candidate_urls(doi, pmcid):
             pass
     # выкидываем pubmed/doi-редиректоры (это абстракт, не полный текст) и любые paywall-bypass
     # зеркала (как это делает сам DocMed) — работаем только с легальными OA-источниками
+            if (w.get("open_access") or {}).get("is_oa"):
+                free = True
     SKIP = ("pubmed.ncbi.nlm.nih.gov", "://doi.org/", "ncbi.nlm.nih.gov/pubmed", "sci-hub", "scihub")
     seen, out = set(), []
     for u in urls:
         if u and u not in seen and not any(s in u.lower() for s in SKIP):
             seen.add(u); out.append(u)
     out.sort(key=lambda u: 0 if ("pdf" in u.lower()) else 1)  # PDF первыми
-    return out[:12]
+    # Свободная лицензия, но прямые ссылки не сработали — идём через doi.org на сайт
+    # издателя: у открытых журналов там лежит весь текст. Отсев мусора — в fetch_fulltext
+    # (проверка длины и разделов), поэтому страница с одним абстрактом не пройдёт.
+    if doi and free:
+        out.append("https://doi.org/" + doi.lower())
+    return out[:14]
 
 def _pdf_to_text(pdf_bytes):
     with tempfile.TemporaryDirectory(prefix="sci_pdf_") as tmp:
@@ -265,10 +294,22 @@ def preprint_versions(title, doi=""):
     return urls[:4]
 
 
+FT_SECTIONS = ("method", "materials", "results", "discussion", "conclusion",
+               "participants", "statistical", "limitations")
+
+
+def looks_like_fulltext(text):
+    """Отличает настоящий полный текст от страницы с одним абстрактом: у статьи
+    есть её разделы. Без этой проверки лендинг издателя с меню и списком «читайте
+    также» проходил по длине и уезжал в выжимку вместо статьи."""
+    low = (text or "").lower()
+    return sum(1 for w in FT_SECTIONS if w in low) >= 3
+
+
 def fetch_fulltext(art):
     """Возвращает (текст, источник). Пусто если полнотекст не добыт.
-    PDF принимаем от FT_MIN; HTML-лендинг — только если заметно длиннее абстракта (>=4000),
-    иначе это просто страница с абстрактом, а не полный текст."""
+    PDF принимаем от FT_MIN; HTML — только если он длиннее абстракта (>=4000)
+    И в нём видны разделы статьи, иначе это страница с абстрактом."""
     pmcid, doi = art.get("pmcid"), art.get("doi")
     if pmcid and art.get("isOpenAccess") == "Y":
         t = _pmc_xml_text(pmcid)
@@ -276,12 +317,12 @@ def fetch_fulltext(art):
             return t, "Europe PMC (PMC XML)"
     for u in _oa_candidate_urls(doi, pmcid):
         t, is_pdf = _fetch_url_text(u)
-        if t and len(t) >= (FT_MIN if is_pdf else 4000):
+        if t and len(t) >= (FT_MIN if is_pdf else 4000) and (is_pdf or looks_like_fulltext(t)):
             return t, u
     # последняя легальная попытка — свободный препринт той же работы
     for u in preprint_versions(art.get("title", ""), doi or ""):
         t, is_pdf = _fetch_url_text(u)
-        if t and len(t) >= FT_MIN:
+        if t and len(t) >= FT_MIN and (is_pdf or looks_like_fulltext(t)):
             return t, u + "  (препринт-версия)"
     return "", ""
 
