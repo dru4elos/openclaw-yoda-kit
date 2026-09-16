@@ -15,22 +15,31 @@ python3 ~/.openclaw/workspace/skills/webrec/webrec.py start  --out <дир> --na
 python3 ~/.openclaw/workspace/skills/webrec/webrec.py status --out <дир>
 python3 ~/.openclaw/workspace/skills/webrec/webrec.py stop   --out <дир>
 python3 ~/.openclaw/workspace/skills/webrec/webrec.py check  <файл.mp4>
+~/mailvenv/bin/python ~/.openclaw/workspace/skills/webrec/webrec.py open   --url "<комната>" --close-others
+~/mailvenv/bin/python ~/.openclaw/workspace/skills/webrec/webrec.py unmute --out <дир>
 ```
 
 ## Порядок на эфире — строго по шагам
 
-1. **За 5–10 минут** открой страницу эфира инструментом `browser` **с профилем `rec`**
-   (`profile: "rec"`; `open` → `snapshot` → `act`). Только этот профиль рисует на экран
-   `:99`, который пишется. Профиль по умолчанию `openclaw` — невидимый, для обычного
-   сёрфинга, в запись не попадает. Войди как участник. Камеру и микрофон не
-   включай; если просят — «продолжить без камеры».
+1. **За 5–10 минут** открой комнату командой `webrec open --url "<адрес>" --close-others`.
+   **НЕ через `browser open`:** вкладки, открытые браузерным инструментом, OpenClaw закрывает,
+   когда твоя сессия кончается — 16.09 так оборвался звонок через 9 минут после входа.
+   `open` сам поднимет браузер записи и напечатает `tab_id`. Дальше — инструмент `browser`
+   с `profile: "rec"` и `targetId = tab_id` (`snapshot` → `act`). Только профиль `rec` рисует
+   на экран `:99`, который пишется. Войди как участник. Камеру и микрофон не включай;
+   если просят — «продолжить без камеры».
 2. **Как только эфир пошёл** (видно плеер/спикера) — `webrec start` с `--until`
    на 10 минут позже заявленного конца. Пишется сегментами по 10 минут.
-   **Сразу после входа:** `~/mailvenv/bin/python webrec.py unmute` — комнаты
+   `start` сам выводит комнату на экран и запускает сторожа записи (ниже).
+   **Сразу после входа:** `~/mailvenv/bin/python webrec.py unmute --out <дир>` — комнаты
    держат плееры на паузе до клика, без этого запись немая. Потом `webrec probe`:
    должно быть `sound: true`. Тишина — повтори unmute, проверь, что вкладка
    комнаты активна. Не верь «поток в карту есть» — верь только probe.
-3. **Раз в 15–20 минут** — `webrec status`: `recording: true`, растёт
+3. **Сторож записи** (`webrec watch`, стартует вместе с `start`) раз в минуту проверяет: вкладка
+   комнаты на месте и на экране, звук есть. Пропала вкладка — открывает заново, заказывает
+   перезаход (`webinar.py rejoin`) и пишет владельцу; тишина 2 минуты — `unmute`, 4 минуты —
+   сообщение. Журнал — `<дир>/watch.log`.
+   **Раз в 15–20 минут** — `webrec status`: `recording: true`, растёт
    `last_segment_mb`, `last_write_sec_ago` маленький. Держи вкладку эфира
    АКТИВНОЙ и единственной — записывается весь экран, а не вкладка.
    Не открывай другие сайты в этом браузере, пока идёт запись.
@@ -45,6 +54,10 @@ python3 ~/.openclaw/workspace/skills/webrec/webrec.py check  <файл.mp4>
 `systemctl --user status xvfb-webrec pulse-webrec`.
 
 ## Грабли
+- **Комнату — только `webrec open`.** OpenClaw считает «своими» вкладки из `browser open` и
+  закрывает их по концу сессии (кроны, субагенты); `browser.tabCleanup` это не отключает.
+- Браузер записи — дочерний процесс шлюза: перезапуск Йоды его убивает. `webrec open` поднимает
+  его заново (`openclaw browser --browser-profile rec start`).
 - Звук и картинка — только у профиля `rec`: его Chrome запускается через
   `~/bin/chrome-rec` (`browser.profiles.rec.executablePath` в openclaw.json, CDP-порт
   18801). Открыл эфир в профиле по умолчанию — запишется пустой экран. Не меняй.
@@ -52,4 +65,4 @@ python3 ~/.openclaw/workspace/skills/webrec/webrec.py check  <файл.mp4>
   записался не эфир.
 - 720p, 15 к/с, x264 veryfast: ~1 ядро, ~150–250 МБ/час. Диск смотри заранее.
 - DRM, платный доступ, капчу — не обходить. Заблокировало — доложи, что нужно
-  от доктора.
+  от владельца.

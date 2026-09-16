@@ -42,7 +42,7 @@ if os.path.exists(_p):
 KEY, URL = ENV.get("EXCASH_API_KEY", ""), ENV.get("EXCASH_API_URL", "")
 try:                                   # страж-прокси OpenClaw: CDN excash режет прямые тела >10 КБ (картинки base64 — всегда больше)
     import urllib.request as _u
-    if _u.urlopen("http://127.0.0.1:8788/health", timeout=3).status == 200:
+    if _u.urlopen("http://127.0.0.1:8788/_guard/health", timeout=3).status == 200:
         URL = "http://127.0.0.1:8788"
 except Exception:
     pass

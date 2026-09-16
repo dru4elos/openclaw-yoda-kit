@@ -14,8 +14,10 @@ PROFILES = {
     # 272k-Astra вдвое дешевле 1M (50 ₽/M против 100) и заставляет сжимать историю около 200k;
     # 1M — первый резерв на переполнение и пин утреннего брифа. Heartbeat — на flash в лёгком режиме.
     "excash": {"primary": "excash/gpt-6-astra",
-               "fallbacks": ["excash/gpt-6-astra-1m", "excash/gpt-5.6-sol-1m", "excash/gemini-3.8-flash",
-                             "excash/gpt-5.6-sol-1m-fast", "excash/gemini-3.7-flash-tiered", "dseek/deepseek-flash"],
+               # 16.09: sol-1m отвечал ошибкой 36 из 36 раз; gemini-3.8-flash на «перегружен» (529) обрывает ход,
+               # а не уходит к следующему резерву — поэтому DeepSeek раньше Gemini
+               "fallbacks": ["excash/gpt-6-astra-1m", "excash/gpt-5.6-luna-1m", "dseek/deepseek-flash",
+                             "excash/gemini-3.8-flash", "excash/gemini-3.7-flash-tiered"],
                "cheap": "excash/gemini-3.8-flash", "brief": "excash/gpt-6-astra-1m", "heartbeat": "excash/gemini-3.8-flash",
                # субагенты по умолчанию — Luna 1M (рассуждает); для поиска/сбора источников Astra сама запускает
                # sessions_spawn с model dseek/deepseek-flash и thinking off (241 ток/с против 58, в разы дешевле) —

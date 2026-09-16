@@ -414,7 +414,7 @@ def _excash_url(direct):
     if _GUARD_OK is None:
         try:
             import urllib.request as _u
-            _GUARD_OK = _u.urlopen("http://127.0.0.1:8788/health", timeout=3).status == 200
+            _GUARD_OK = _u.urlopen("http://127.0.0.1:8788/_guard/health", timeout=3).status == 200
         except Exception:
             _GUARD_OK = False
     return "http://127.0.0.1:8788" if _GUARD_OK else direct

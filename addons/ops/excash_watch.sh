@@ -28,4 +28,22 @@ if [ -n "$DK" ]; then
   fi
 fi
 
+
+# Основная модель Йоды. 16.09 GPT-6 Astra сбоила примерно в трети запросов, а дозор проверял
+# только gemini-3.8-flash и молчал. Три пробы: две и больше с ошибкой — считаем, что сбоит.
+AST=/var/tmp/excash_astra.state
+fails=0
+for i in 1 2 3; do
+  c=$(curl -s -m 60 -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $K" -H "Content-Type: application/json" \
+      -d '{"model":"gpt-6-astra","messages":[{"role":"user","content":"ok?"}],"max_tokens":5}' http://127.0.0.1:8788/chat/completions)
+  [ "$c" = "200" ] || fails=$((fails+1))
+done
+aprev=$(cat $AST 2>/dev/null || echo "?")
+if [ $fails -ge 2 ]; then
+  echo bad > $AST
+  [ "$aprev" != "bad" ] && say "⚠️ Основная модель Йоды GPT-6 Astra на excash сбоит: $fails из 3 проверок с ошибкой. Йода отвечает через резервы, медленнее. Если затянется: sudo yoda-models deepseek"
+else
+  echo ok > $AST
+  [ "$aprev" = "bad" ] && say "✅ GPT-6 Astra на excash снова отвечает."
+fi
 exit 0

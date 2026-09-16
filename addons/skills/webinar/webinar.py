@@ -41,8 +41,8 @@ MSK = ZoneInfo("Europe/Moscow")
 EVENTS_DIR = f"{OC}/workspace/Эфиры"
 SEG_SEC = 240                                   # кусок для GigaAM, сек: контейнер с лимитом 900 МБ падает на 10-мин, 3–4 мин держит
 SILENCE_DB = -55.0
-CLEAN_MODELS = ["gpt-5.3-codex-spark", "gemini-3.8-flash", "gpt-5.6-sol-1m"]   # Spark: 2400 ток/с, чистка куска ~1 с
-SUM_MODELS = ["gpt-6-astra-1m", "gpt-5.6-sol-1m", "gemini-3.8-flash"]
+CLEAN_MODELS = ["gpt-5.3-codex-spark", "gemini-3.8-flash", "gpt-5.6-luna-1m"]   # Spark: 2400 ток/с, чистка куска ~1 с
+SUM_MODELS = ["gpt-6-astra-1m", "gpt-5.6-luna-1m", "gemini-3.8-flash"]
 
 
 def _env():
@@ -256,6 +256,12 @@ def stage_transcribe(out, video, seg):
         start = i * seg
         text, engine = None, None
         t0 = time.time()
+        vol = loudness(ch)
+        if vol is not None and vol <= -70:        # тишина: GigaAM вернёт пусто, а это полминуты на кусок
+            st["chunks"][key] = {"i": 0, "start": start, "end": 0, "text": "", "engine": "silence", "sec": 0}
+            st_save(out, st)
+            log(out, f"кусок {i} [{hms(start)}]: тишина ({vol} дБ), пропускаю")
+            continue
         for attempt in range(1, 4):
             try:
                 with open(ch, "rb") as fh:
@@ -348,7 +354,8 @@ def stage_clean(out, title):
     return st
 
 
-SUM_PROMPT = """Ниже — стенограмма вебинара/конференции «{title}» с таймкодами. Составь ПОДРОБНЫЙ структурированный конспект на русском (Markdown). Читатель — {reader}. Он не смотрел эфир и хочет получить из конспекта всё содержательное, чтобы не пересматривать запись.
+SUM_PROMPT = """Объём конспекта соразмерен стенограмме: речи мало — конспект короткий, без выводов и советов ради структуры; раздел, для которого в стенограмме нет материала, пропускай.
+Ниже — стенограмма вебинара/конференции «{title}» с таймкодами. Составь ПОДРОБНЫЙ структурированный конспект на русском (Markdown). Читатель — {reader}. Он не смотрел эфир и хочет получить из конспекта всё содержательное, чтобы не пересматривать запись.
 {focus}
 Структура:
 1. **О чём эфир** — 3–5 предложений: тема, кто выступал (имена/роли, если названы), формат, главный посыл.
@@ -408,12 +415,20 @@ def stage_notify(out, title, video, mean_db, test=False):
              + (f", НЕ расшифровано: {bad}" if bad else ""),
              f"Конспект: {st.get('summary_model', '?')}",
              f"Папка: {out}"]
+    if st.get("sound_report"):
+        lines.insert(2, "⚠️ " + st["sound_report"])
+    if st.get("incident"):
+        lines.insert(3, st["incident"])
     if video:
         lines.append(f"Видео: {os.path.basename(video)} ({os.path.getsize(video) // 1048576} МБ) — на сервере")
     ok = tg_send("\n".join(lines))
     ok &= tg_doc(os.path.join(out, "summary.md"), f"{head}Конспект: {title}")
     ok &= tg_doc(os.path.join(out, "transcript.md"), f"{head}Стенограмма: {title}")
     log(out, f"доставка владельцу: {'ok' if ok else 'ОШИБКА'}")
+    if ok and not test:
+        st = st_load(out)
+        st["delivered_at"] = datetime.now(MSK).isoformat(timespec="seconds")
+        st_save(out, st)
     return ok
 
 
@@ -449,6 +464,12 @@ def cmd_finish(a):
         st["mean_db"], st["video"] = mean_db, video
         st_save(out, st)
     log(out, f"видео: {video}, {hms(duration(video))}, mean {mean_db} дБ")
+    report = sound_map(out, name)
+    if report:
+        st = st_load(out)
+        st["sound_report"] = report
+        st_save(out, st)
+        log(out, "звук по сегментам: " + report)
     if mean_db is None or mean_db <= -70:
         tg_send(f"{'[ТЕСТ контура] ' if a.test else ''}⚠️ {title}: запись немая (mean {mean_db} дБ) — звук не записался, "
                 f"расшифровки не будет. Видео: {video}")
@@ -466,7 +487,11 @@ def cmd_finish(a):
         st["summary_model"] = stage_summarize(out, title, a.focus or plan.get("focus", ""))
         st_save(out, st)
     if not a.no_notify:
-        stage_notify(out, title, video, mean_db, test=a.test)
+        done = st_load(out).get("delivered_at")
+        if done and not a.force:                 # 16.09 три перезапуска finish прислали один конспект трижды
+            log(out, f"уже доставлено {done} — повторно не шлю (нужно — finish --force)")
+        else:
+            stage_notify(out, title, video, mean_db, test=a.test)
     log(out, "=== готово ===")
 
 
@@ -476,7 +501,12 @@ def _openclaw():
     if w:
         return w
     c = sorted(glob.glob(f"{HOME}/.nvm/versions/node/*/bin/openclaw"))
-    return c[-1] if c else "openclaw"
+    if not c:
+        return "openclaw"
+    # openclaw начинается с «#!/usr/bin/env node»: вне окружения Йоды (сторож записи, ручной запуск)
+    # node нет в PATH, и cron add падал «node: No such file or directory» — кроны молча не ставились
+    os.environ["PATH"] = os.path.dirname(c[-1]) + ":" + os.environ.get("PATH", "")
+    return c[-1]
 
 
 def _slug(title):
@@ -503,6 +533,100 @@ def _parse_when(start, end):
     return s, e
 
 
+def join_message(title, url, out, slug, until, start_hm, organizer="", rejoin=False, start_recording=True):
+    """Задание агенту на вход в комнату — общее для первого входа и перезахода.
+
+    16.09 комнату открывали через browser open, и OpenClaw закрыл вкладку, когда сессия крона
+    кончилась: звонок оборвался через 9 минут. Поэтому комната открывается только webrec open."""
+    link_cmd = f"{PY} {SELF} link --out \"{out}\" --wait 15" + (f" --chat \"{organizer}\"" if organizer else "")
+    head = (f"ПЕРЕЗАХОД в эфир «{title}»: вкладка комнаты закрылась или звука нет. " if rejoin
+            else f"Эфир «{title}», начало {start_hm} МСК. ")
+    steps = [head + "Действуй строго по шагам, не импровизируй.",
+             f"0) Ссылка: {url or 'в plan.json пусто'}. Если пусто или это не адрес комнаты — выполни: {link_cmd} "
+             f"(команда сама ждёт до 15 минут, пока организатор пришлёт ссылку кнопкой, и печатает JSON: url, youtube, zoom). "
+             f"Пусто и после неё — доложи одной строкой «ссылки нет» и НИЧЕГО не записывай.",
+             f"1) Открой комнату ТОЛЬКО так: {PY} {WEBREC} open --url \"<адрес>\" --out \"{out}\" --close-others. НЕ через browser open: "
+             f"такие вкладки OpenClaw закрывает, когда твоя сессия кончается. Команда напечатает tab_id — дальше работай "
+             f"в этой вкладке браузерным инструментом (profile: \"rec\", targetId = tab_id): войди как участник без камеры и "
+             f"микрофона, имя — владельца из USER.md; на YouTube нажми Play. Комната ожидания — жди, проверяя раз в минуту. "
+             f"Ссылка не открывается или ведёт на промежуточную страницу — переходи дальше В ЭТОЙ ЖЕ вкладке."]
+    if start_recording:
+        steps.append(f"2) Как только видно плеер/спикера: {PY} {WEBREC} start --out \"{out}\" --name {slug} --until {until} "
+                     f"(ответ «уже идёт запись» — это нормально, не останавливай её). Старт сам выводит комнату на экран "
+                     f"и запускает сторожа записи.")
+    else:
+        steps.append("2) Запись уже идёт — start НЕ запускай и stop не трогай.")
+    steps += [f"3) {PY} {WEBREC} unmute --out \"{out}\" ; потом {PY} {WEBREC} probe — нужно sound: true. Тишина → "
+              f"повтори unmute (до 3 раз).",
+              "4) Доложи одной строкой: вошёл/нет, recording: true/false, звук есть/нет. Не запускай selftest, других сайтов "
+              "в профиле rec не открывай, конца эфира не жди — за записью следит сторож, обработку делает отдельный крон."]
+    return "\n".join(steps)
+
+
+def cmd_rejoin(a):
+    """Заказать перезаход в комнату: разовый крон фонового агента через минуту.
+    Зовёт сторож записи (webrec watch), когда вкладка комнаты пропала; не чаще раза в 8 минут."""
+    out = os.path.abspath(a.out)
+    pp = os.path.join(out, "plan.json")
+    plan = json.load(open(pp, encoding="utf-8"))
+    now = datetime.now(MSK)
+    done = plan.get("rejoins") or []
+    if done and not a.force:
+        try:
+            if now - datetime.fromisoformat(done[-1]) < timedelta(minutes=8):
+                print(json.dumps({"ok": False, "skipped": "перезаход уже заказан меньше 8 минут назад"}, ensure_ascii=False))
+                return
+        except Exception:
+            pass
+    s_ = datetime.fromisoformat(plan["start"])
+    e_ = datetime.fromisoformat(plan["end"])
+    until = (e_ + timedelta(minutes=10)).strftime("%H:%M")
+    msg = join_message(plan["title"], plan.get("url", ""), out, plan["slug"], until, s_.strftime("%H:%M"),
+                       plan.get("organizer", ""), rejoin=True, start_recording=a.start_recording)
+    at = (now + timedelta(minutes=1)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cmd = [_openclaw(), "cron", "add", "--name", "Эфир: перезаход — " + plan["title"], "--at", at,
+           "--timeout-seconds", "900", "--agent", "background", "--session", "isolated", "--announce",
+           "--channel", "telegram", "--to", OWNER or "<OWNER_TG_ID>", "--delete-after-run", "--message", msg]
+    r = sh(cmd, timeout=90)
+    ok = r.returncode == 0
+    if ok:
+        plan["rejoins"] = done + [now.isoformat()]
+        json.dump(plan, open(pp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    log(out, f"перезаход заказан на {at}: " + ("ok" if ok else (r.stderr or "")[-200:]))
+    print(json.dumps({"ok": ok, "at_utc": at, "err": "" if ok else (r.stderr or "")[-200:]}, ensure_ascii=False))
+
+
+def sound_map(out, name=None):
+    """Где в записи был звук — по сегментам webrec. Средняя громкость всего файла врёт:
+    16.09 десять минут речи и час тишины дали «−47 дБ, звук есть»."""
+    segs = sorted(f for f in glob.glob(os.path.join(out, "*.mp4"))
+                  if "_full" not in f and re.search(r"_\d{8}_\d{6}\.mp4$", f)
+                  and (not name or os.path.basename(f).startswith(name + "_")))
+    if len(segs) < 2:
+        return ""
+    rows = []
+    for f in segs:
+        m = re.search(r"_(\d{8})_(\d{6})\.mp4$", f)
+        t0 = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S").replace(tzinfo=MSK)
+        v = loudness(f)
+        rows.append((t0, duration(f) or 0, v is not None and v > -70))
+    total = sum(d for _, d, _ in rows)
+    loud = sum(d for _, d, ok in rows if ok)
+    if total <= 0 or loud >= total * 0.95:
+        return ""
+    spans, cur = [], None
+    for t0, d, ok in rows:
+        if not ok:
+            cur = [t0, t0 + timedelta(seconds=d)] if cur is None else [cur[0], t0 + timedelta(seconds=d)]
+        elif cur is not None:
+            spans.append(cur)
+            cur = None
+    if cur is not None:
+        spans.append(cur)
+    gaps = ", ".join(f"{x.strftime('%H:%M')}–{y.strftime('%H:%M')}" for x, y in spans)
+    return f"звук записан только {round(loud / 60)} из {round(total / 60)} мин; тишина: {gaps}"
+
+
 def cmd_plan(a):
     s, e = _parse_when(a.start, a.end)
     slug = _slug(a.title)
@@ -527,31 +651,18 @@ def cmd_plan(a):
             f"Регистрация через Telegram-бота организатора — за владельца нажать нельзя: отправь ему ссылку и попроси "
             f"переслать тебе ссылку на трансляцию. Итог одной строкой: зарегистрирован/что мешает, ссылка на трансляцию "
             f"(если появилась — положи её в {out}/plan.json в поле url)."]))
-    link_cmd = f"{PY} {SELF} link --out \"{out}\" --wait 15" + (f" --chat \"{a.organizer}\"" if a.organizer else "")
     jobs.append(("Эфир: вход и запись — " + a.title, iso(s - timedelta(minutes=10)), 1800, [
-        "--message",
-        f"Эфир «{a.title}», начало {s.strftime('%H:%M')} МСК. Действуй строго по шагам, не импровизируй.\n"
-        f"0) Ссылка: {a.url or 'в plan.json пусто'}. Если пусто или это не адрес комнаты — выполни: {link_cmd} "
-        f"(команда сама ждёт до 15 минут, пока организатор пришлёт ссылку кнопкой, и печатает JSON: url, youtube, zoom). "
-        f"Пусто и после неё — доложи владельцу одной строкой «ссылки нет» и НИЧЕГО не записывай.\n"
-        f"1) Открой url (YouTube предпочтительнее Zoom) в браузере ТОЛЬКО с профилем rec (profile: \"rec\"); войди как "
-        f"участник без камеры и микрофона, имя — владельца из USER.md; на YouTube нажми Play.\n"
-        f"2) Как только видно плеер/спикера: {PY} {WEBREC} start --out \"{out}\" --name {slug} --until {until}\n"
-        f"3) {PY} {WEBREC} unmute ; потом {PY} {WEBREC} probe — нужно sound: true. Тишина → повтори unmute (до 3 раз), "
-        f"проверь, что вкладка эфира активна.\n"
-        f"4) Доложи одной строкой: вошёл/нет, recording: true/false, звук есть/нет. Не запускай selftest, других сайтов в "
-        f"профиле rec не открывай, конца эфира не жди — обработку делает отдельный крон (если был YouTube, он сам "
-        f"скачает запись оттуда)."]))
+        "--message", join_message(a.title, a.url, out, slug, until, s.strftime("%H:%M"), a.organizer)]))
     jobs.append(("Эфир: контроль звука — " + a.title, iso(s + timedelta(minutes=20)), 900, [
         "--message",
-        f"Контроль записи эфира «{a.title}»: {PY} {WEBREC} status --out \"{out}\" и {PY} {WEBREC} probe.\n"
+        f"Контроль записи эфира «{a.title}»: {PY} {WEBREC} status --out \"{out}\" и {PY} {WEBREC} probe; "
+        f"журнал сторожа записи — {out}/watch.log.\n"
         f"- recording: true и sound: true — доложи одной строкой «идёт, звук есть».\n"
-        f"- recording: true, тишина — {PY} {WEBREC} unmute и снова probe (до 3 раз); доложи результат.\n"
-        f"- recording: false — сначала проверь, открыта ли комната: browser tabs с profile \"rec\". Комната открыта и в ней "
-        f"идёт эфир — {PY} {WEBREC} start --out \"{out}\" --name {slug} --until {until}, затем unmute и probe. "
-        f"Комнаты НЕТ — запись НЕ запускай (пустой экран писать бессмысленно): добудь ссылку как в задании входа "
-        f"(read чата организатора — кнопки печатаются строками «🔘»), войди в профиле rec и только тогда start. "
-        f"Ссылки нет нигде — доложи владельцу одной строкой, что эфир не записывается и почему."]))
+        f"- recording: true, тишина — {PY} {WEBREC} unmute --out \"{out}\" и снова probe (до 3 раз). Не помогло, а "
+        f"вкладки комнаты в браузере записи нет (browser tabs, profile rec) — {PY} {SELF} rejoin --out \"{out}\" и доложи.\n"
+        f"- recording: false — {PY} {SELF} rejoin --out \"{out}\" --start-recording и доложи.\n"
+        f"Комнату НИКОГДА не открывай через browser open: такие вкладки OpenClaw закрывает, когда твоя сессия кончается. "
+        f"Только {PY} {WEBREC} open --url <адрес> --out \"{out}\"."]))
     finish_cmd = f"{PY} {SELF} finish --out \"{out}\""
     jobs.append(("Эфир: обработка — " + a.title, iso(e + timedelta(minutes=12)), 10800, [
         "--command", finish_cmd, "--command-cwd", out]))
@@ -767,6 +878,9 @@ def main():
                              "summarize": lambda a: stage_summarize(os.path.abspath(a.out), a.title or os.path.basename(a.out), a.focus),
                              "notify": lambda a: stage_notify(os.path.abspath(a.out), a.title or os.path.basename(a.out),
                                                               find_full(os.path.abspath(a.out)), st_load(os.path.abspath(a.out)).get("mean_db"), a.test)}[name])
+    rj = sub.add_parser("rejoin", help="заказать перезаход в комнату (зовёт сторож записи)"); rj.add_argument("--out", required=True)
+    rj.add_argument("--start-recording", action="store_true"); rj.add_argument("--force", action="store_true")
+    rj.set_defaults(func=cmd_rejoin)
     s = sub.add_parser("status"); s.add_argument("--out", required=True); s.set_defaults(func=cmd_status)
     lk = sub.add_parser("link", help="добыть ссылку на комнату из чата организатора (кнопки)"); lk.add_argument("--out", required=True)
     lk.add_argument("--chat", default=""); lk.add_argument("--wait", type=int, default=15, help="минут ждать"); lk.add_argument("--every", type=int, default=60)
