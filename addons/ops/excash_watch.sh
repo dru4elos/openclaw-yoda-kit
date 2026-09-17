@@ -41,9 +41,9 @@ done
 aprev=$(cat $AST 2>/dev/null || echo "?")
 if [ $fails -ge 2 ]; then
   echo bad > $AST
-  [ "$aprev" != "bad" ] && say "⚠️ Основная модель Йоды GPT-6 Astra на excash сбоит: $fails из 3 проверок с ошибкой. Йода отвечает через резервы, медленнее. Если затянется: sudo yoda-models deepseek"
+  [ "$aprev" != "bad" ] && say "⚠️ Основная модель Йоды GPT-6 Astra на excash сбоит: $fails из 3 проверок с ошибкой. Йода отвечает через резервы, медленнее. Если затянется: sudo yoda-models excash-flash (основной станет Gemini)"
 else
   echo ok > $AST
-  [ "$aprev" = "bad" ] && say "✅ GPT-6 Astra на excash снова отвечает."
+  [ "$aprev" = "bad" ] && say "✅ GPT-6 Astra на excash снова отвечает. Вернуть её основной: sudo yoda-models excash"
 fi
 exit 0

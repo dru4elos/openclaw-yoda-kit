@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""yoda-models excash|deepseek [--no-restart] — переключить модели ОБОИХ Йод (openclaw, yoda2) и пины кронов.
+"""yoda-models excash|excash-flash|deepseek [--no-restart] — переключить модели ОБОИХ Йод (openclaw, yoda2) и пины кронов.
 excash: основная gpt-6-astra (272k), резервы astra-1m → sol-1m → gemini-3.8-flash → … → DeepSeek V4.1 Flash;
         дешёвое — gemini-3.8-flash, субагенты — Luna 1M (поисковых Astra по своему выбору пускает на DeepSeek V4.1 Flash).
 deepseek: ВСЯ Йода на DeepSeek V4.1 Flash (id deepseek-flash: 1M контекста, 240 ток/с, картинки, ~10-20× дешевле
@@ -25,6 +25,16 @@ PROFILES = {
                "subagents": {"primary": "excash/gpt-5.6-luna-1m", "fallbacks": ["dseek/deepseek-flash"]},
                "think": "adaptive"},   # субагенты: Luna 1M (рассуждает, 1M контекста) — по наблюдениям из практики лучше на многошаговых задачах; Spark — конвейеры
     # deepseek-v4-pro с 14.09.2026 сам перенаправляется на V4.1 Flash — отдельной «про» больше нет
+    # excash-flash: excash, но основная — Gemini 3.8 Flash. На случай, когда GPT-6 Astra на excash сбоит
+    # (16–17.09 отвечала 500 «internal error»): Astra в резерве, DeepSeek не в цепочке (пустой баланс = 402).
+    # Когда Astra оживёт (дозор напишет «снова отвечает») — sudo yoda-models excash.
+    "excash-flash": {"primary": "excash/gemini-3.8-flash",
+                     "fallbacks": ["excash/gpt-5.6-luna-1m", "excash/gpt-6-astra", "excash/gpt-6-astra-1m",
+                                   "excash/gemini-3.7-flash-tiered"],
+                     "cheap": "excash/gemini-3.8-flash", "brief": "excash/gpt-5.6-luna-1m",
+                     "heartbeat": "excash/gemini-3.8-flash",
+                     "subagents": {"primary": "excash/gpt-5.6-luna-1m", "fallbacks": ["excash/gemini-3.8-flash"]},
+                     "think": "adaptive"},
     "deepseek": {"primary": "dseek/deepseek-flash", "fallbacks": [],
                  "cheap": "dseek/deepseek-flash", "brief": "dseek/deepseek-flash", "heartbeat": "dseek/deepseek-flash",
                  "subagents": "dseek/deepseek-flash", "subthink": "off", "think": "off"},
