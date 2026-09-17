@@ -1,0 +1,22 @@
+# DeepSeek Harness у Йоды: модели excash через локального стража (на официальном DeepSeek баланс пустой).
+# Ключа здесь нет: обёртка dsh_run.sh подставляет EXCASH_API_KEY из ~/.openclaw/.env при запуске.
+llm-pi-ai:
+  providers:
+    excash:
+      displayName: excash
+      apiKeyEnv: EXCASH_API_KEY
+      api: openai-completions
+      baseURL: http://127.0.0.1:8788
+      models:
+        - id: gemini-3.8-flash
+          contextWindow: 1048576
+          maxTokens: 65535
+        - id: gpt-5.6-luna-1m
+          contextWindow: 1000000
+          maxTokens: 65535
+        - id: gpt-6-astra
+          contextWindow: 272000
+          maxTokens: 65535
+agent-default-model:
+  provider: excash
+  model: gemini-3.8-flash   # замените на свою модель
