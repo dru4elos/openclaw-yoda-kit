@@ -1,0 +1,17 @@
+#!/bin/bash
+# Подключить GitHub Йоде. Токен уходит прямо в gh пользователя openclaw (файл с правами 600),
+# на экран и в историю команд не попадает. Организация — GH_ORG в ~/.openclaw/.env.
+set -e
+read -r -p "Организация на GitHub (например my-lab): " ORG
+[[ "$ORG" =~ ^[A-Za-z0-9-]{1,39}$ ]] || { echo "Имя организации: латиница, цифры, дефис. Отмена."; exit 1; }
+read -rs -p "Токен (ввод не отображается), Enter: " TOK; echo
+[ -n "$TOK" ] || { echo "Пусто — отмена."; exit 1; }
+printf "%s" "$TOK" | sudo -u openclaw -H gh auth login --hostname github.com --with-token
+unset TOK
+sudo -u openclaw -H gh auth setup-git
+E=/home/openclaw/.openclaw/.env
+if grep -q "^GH_ORG=" "$E"; then sed -i "s/^GH_ORG=.*/GH_ORG=$ORG/" "$E"; else echo "GH_ORG=$ORG" >> "$E"; fi
+chown openclaw:openclaw "$E"
+echo "---- проверка"
+sudo -u openclaw -H gh auth status 2>&1 | sed -n 1,5p
+sudo -u openclaw -H /home/openclaw/mailvenv/bin/python /home/openclaw/.openclaw/workspace/skills/projects/projects.py whoami

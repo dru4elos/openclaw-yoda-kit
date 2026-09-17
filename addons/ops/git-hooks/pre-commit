@@ -1,0 +1,20 @@
+#!/bin/bash
+# Защита репозиториев Йоды (~/projects): ключи и пароли, огромные файлы, медицинские данные.
+# Сработала — коммит не создаётся; причина печатается. Ложное срабатывание гасится строкой в .gitleaksignore.
+fail=0
+if command -v gitleaks >/dev/null; then
+  if ! gitleaks git --pre-commit --staged --redact --no-banner -v >/tmp/gitleaks_$$.log 2>&1; then
+    echo "⛔ gitleaks нашёл похожее на ключ или пароль:"; grep -E "Finding|File|RuleID" /tmp/gitleaks_$$.log | head -20; fail=1
+  fi
+  rm -f /tmp/gitleaks_$$.log
+fi
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  size=$(stat -c %s "$f")
+  if [ "$size" -gt 20971520 ]; then echo "⛔ файл больше 20 МБ: $f — данные и модели в git не кладём (релизы, хранилище, скачивание скриптом)"; fail=1; fi
+  case "${f,,}" in
+    *.env|.env.*|*/.env|*id_rsa*|*id_ed25519*|*.pem|*.key|*.p12|*.pfx) echo "⛔ секреты в git нельзя: $f"; fail=1;;
+    *.dcm|*.dicom|*.nii|*.nii.gz|*.mha|*.nrrd) echo "⛔ медицинские снимки в git нельзя: $f"; fail=1;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=AM)
+exit $fail
