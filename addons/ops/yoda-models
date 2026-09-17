@@ -105,7 +105,7 @@ def main():
                         # печаталась как ok. Утренний бриф остался на мёртвой Astra 1M и упал в 08:00.
                         r = run_as(user, f"openclaw cron edit {j['id']} --model {prof[kind]}")
                         out = (r.stdout + r.stderr).strip()
-                        ok = r.returncode == 0 and "rror" not in out
+                        ok = r.returncode == 0          # правду скажет сверка ниже, а не текст ответа
                         tail = (out.splitlines() or [""])[-1][:120]
                         print(f"  крон «{j['name'][:22]}» → {prof[kind]}: {'ok' if ok else 'ОШИБКА ' + tail}")
             lst2 = run_as(user, "openclaw cron list --json 2>/dev/null").stdout
