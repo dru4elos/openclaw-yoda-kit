@@ -8,7 +8,7 @@ deepseek: ВСЯ Йода на DeepSeek V4.1 Flash (id deepseek-flash: 1M кон
         в цепочке (чтобы не ловить бан IP). Рассуждения выключены (thinkingDefault off): с ними DeepSeek тратит
         5-11 тыс. токенов и 20-45 с на простой ответ; в чате можно включить командой /think.
 Обратно: sudo yoda-models excash. Обе команды: правят openclaw.json обеих Йод, пины кронов, перезапускают шлюзы (~1 мин)."""
-import json, os, pwd, subprocess, sys, time
+import json, os, pwd, re, subprocess, sys, time
 
 PROFILES = {
     # 272k-Astra вдвое дешевле 1M (50 ₽/M против 100) и заставляет сжимать историю около 200k;
@@ -101,8 +101,24 @@ def main():
             for j in jobs:
                 for prefix, kind in pins.items():
                     if str(j.get("name", "")).startswith(prefix):
-                        r = run_as(user, f"openclaw cron edit {j['id']} --model {prof[kind]} 2>&1 | tail -1")
-                        print(f"  крон «{j['name'][:22]}» → {prof[kind]}: {'ok' if r.returncode == 0 else r.stdout[-100:]}")
+                        # 17.09: здесь стоял «| tail -1» — код возврата брался у tail, и ЛЮБАЯ ошибка
+                        # печаталась как ok. Утренний бриф остался на мёртвой Astra 1M и упал в 08:00.
+                        r = run_as(user, f"openclaw cron edit {j['id']} --model {prof[kind]}")
+                        out = (r.stdout + r.stderr).strip()
+                        ok = r.returncode == 0 and "rror" not in out
+                        print(f"  крон «{j['name'][:22]}» → {prof[kind]}: {'ok' if ok else (out[-140:] or 'ошибка')}")
+            lst2 = run_as(user, "openclaw cron list --json 2>/dev/null").stdout
+            try:
+                jobs2 = json.loads(lst2); jobs2 = jobs2 if isinstance(jobs2, list) else jobs2.get("jobs", [])
+            except Exception:
+                jobs2 = []
+            for j in jobs2:                                  # сверка по факту, а не по коду возврата
+                for prefix, kind in pins.items():
+                    if str(j.get("name", "")).startswith(prefix):
+                        m = re.search(r'"model"\s*:\s*"([^"]+)"', json.dumps(j, ensure_ascii=False))
+                        got = m.group(1) if m else "по умолчанию"
+                        if got != prof[kind]:
+                            print(f"  ⚠️ пин НЕ применился: «{j['name'][:30]}» стоит {got}, ожидалось {prof[kind]}")
     if "--no-restart" in sys.argv:
         return
     for user in ("openclaw", "yoda2"):
