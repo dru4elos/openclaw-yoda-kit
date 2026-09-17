@@ -106,19 +106,25 @@ def main():
                         r = run_as(user, f"openclaw cron edit {j['id']} --model {prof[kind]}")
                         out = (r.stdout + r.stderr).strip()
                         ok = r.returncode == 0 and "rror" not in out
-                        print(f"  крон «{j['name'][:22]}» → {prof[kind]}: {'ok' if ok else (out[-140:] or 'ошибка')}")
+                        tail = (out.splitlines() or [""])[-1][:120]
+                        print(f"  крон «{j['name'][:22]}» → {prof[kind]}: {'ok' if ok else 'ОШИБКА ' + tail}")
             lst2 = run_as(user, "openclaw cron list --json 2>/dev/null").stdout
             try:
                 jobs2 = json.loads(lst2); jobs2 = jobs2 if isinstance(jobs2, list) else jobs2.get("jobs", [])
             except Exception:
                 jobs2 = []
+            bad = []
             for j in jobs2:                                  # сверка по факту, а не по коду возврата
                 for prefix, kind in pins.items():
                     if str(j.get("name", "")).startswith(prefix):
                         m = re.search(r'"model"\s*:\s*"([^"]+)"', json.dumps(j, ensure_ascii=False))
                         got = m.group(1) if m else "по умолчанию"
                         if got != prof[kind]:
-                            print(f"  ⚠️ пин НЕ применился: «{j['name'][:30]}» стоит {got}, ожидалось {prof[kind]}")
+                            bad.append(f"«{j['name'][:30]}» стоит {got}, ожидалось {prof[kind]}")
+            for b in bad:
+                print("  ⚠️ пин НЕ применился:", b)
+            if not bad:
+                print(f"  пины кронов {user}: сверены, в порядке")
     if "--no-restart" in sys.argv:
         return
     for user in ("openclaw", "yoda2"):
