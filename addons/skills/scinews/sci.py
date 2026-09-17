@@ -32,7 +32,7 @@ if os.path.exists(_p):
             k, v = line.split("=", 1)
             ENV[k.strip()] = v.strip().strip('"').strip("'")
 
-UNPAYWALL_EMAIL = ENV.get("UNPAYWALL_EMAIL", "you@example.com")
+UNPAYWALL_EMAIL = ENV.get("UNPAYWALL_EMAIL", "dru4elos@gmail.com")
 
 # ---------- LLM: excash (страж → прямой) -> резерв DeepSeek V4.1 Flash ----------
 def _llm_once(base_url, key, model, messages, max_tokens, temperature, timeout=600):
@@ -69,6 +69,11 @@ def llm(messages, max_tokens=20000, temperature=0.35, models=("gemini-3.8-flash"
                 except Exception as e:
                     sys.stderr.write(f"excash {model} через {base.split('//')[-1][:20]}: {str(e)[:80]}\n")
         sys.stderr.write("excash недоступен -> DeepSeek\n")
+    rk = ENV.get("ROUTERAI_API_KEY")
+    if rk:
+        # резерв: тот же DeepSeek V4.1 Flash, но у RouterAI — другой провайдер и оплата в рублях
+        return _llm_once("https://routerai.ru/api/v1", rk, "deepseek/deepseek-v4.1-flash",
+                         messages, min(max(max_tokens, 8000), 32000), temperature, timeout=900)
     dk = ENV.get("DEEPSEEK_API_KEY")
     if dk:
         # резерв: DeepSeek V4.1 Flash — 240 ток/с, 1M контекста, мультимодальный

@@ -1,0 +1,111 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""yoda-key routerai — подключить RouterAI (DeepSeek V4.1 Flash) обеим Йодам.
+
+Ключ вводится здесь, в скрытом поле: он не попадает ни в историю команд, ни в чат,
+ни в мои логи. Сначала скрипт проверяет ключ живым запросом к RouterAI и только потом
+что-то пишет — если ключ не подошёл, конфиги остаются нетронутыми.
+
+Что делает: кладёт ROUTERAI_API_KEY в .env обеих Йод (права 600, владелец — сама Йода),
+добавляет провайдера routerai в openclaw.json, проверяет конфиг.
+Дальше модель включается обычным переключателем: sudo yoda-models excash-flash.
+
+Запуск с Мака: ssh -t vps yoda-key routerai
+"""
+import getpass
+import json
+import os
+import pwd
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+USERS = ("openclaw", "yoda2")
+BASE = "https://routerai.ru/api/v1"
+MODEL = "deepseek/deepseek-v4.1-flash"
+ENV_NAME = "ROUTERAI_API_KEY"
+
+
+def probe(key):
+    """Живая проверка ключа: 5 токенов на самой дешёвой ветке."""
+    body = {"model": MODEL, "messages": [{"role": "user", "content": "ok?"}], "max_tokens": 5}
+    req = urllib.request.Request(
+        BASE + "/chat/completions", data=json.dumps(body).encode(),
+        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+    t0 = time.time()
+    with urllib.request.urlopen(req, timeout=90) as r:
+        data = json.load(r)
+    text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+    return round(time.time() - t0, 1), (text or "").strip()[:60]
+
+
+def write_env(user, key):
+    home = pwd.getpwnam(user).pw_dir
+    p = f"{home}/.openclaw/.env"
+    lines = []
+    if os.path.exists(p):
+        lines = [l for l in open(p, encoding="utf-8").read().splitlines()
+                 if not l.startswith(ENV_NAME + "=")]
+    lines.append(f"{ENV_NAME}={key}")
+    open(p, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    os.chmod(p, 0o600)
+    os.chown(p, pwd.getpwnam(user).pw_uid, pwd.getpwnam(user).pw_gid)
+    return p
+
+
+def add_provider(user, key):
+    home = pwd.getpwnam(user).pw_dir
+    c = f"{home}/.openclaw/openclaw.json"
+    cfg = json.load(open(c, encoding="utf-8"))
+    open(f"{c}.pre-routerai.{int(time.time())}", "w", encoding="utf-8").write(
+        json.dumps(cfg, ensure_ascii=False, indent=2))
+    cfg["models"].setdefault("providers", {})["routerai"] = {
+        "baseUrl": BASE,
+        "apiKey": key,
+        "api": "openai-completions",
+        "models": [{
+            "id": MODEL,
+            "name": "DeepSeek V4.1 Flash (RouterAI)",
+            "contextWindow": 1048576,
+            "maxTokens": 32000,
+            "input": ["text", "image"],
+        }],
+    }
+    json.dump(cfg, open(c, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    os.chmod(c, 0o600)
+    os.chown(c, pwd.getpwnam(user).pw_uid, pwd.getpwnam(user).pw_gid)
+    r = subprocess.run(["su", "-", user, "-c",
+                        "source ~/.nvm/nvm.sh >/dev/null 2>&1; openclaw config validate 2>&1 | tail -1"],
+                       capture_output=True, text=True, timeout=300)
+    return r.stdout.strip()
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] != "routerai":
+        sys.exit(__doc__)
+    if os.geteuid() != 0:
+        sys.exit("нужен root: sudo yoda-key routerai")
+    key = getpass.getpass("Ключ RouterAI (вводите, символы не показываются): ").strip()
+    if len(key) < 20 or not key.startswith("sk-"):
+        sys.exit("это не похоже на ключ RouterAI (ожидается sk-…). Ничего не записано.")
+    print("проверяю ключ живым запросом…")
+    try:
+        sec, ans = probe(key)
+    except urllib.error.HTTPError as e:
+        body = e.read()[:200].decode("utf-8", "replace")
+        sys.exit(f"RouterAI ответил HTTP {e.code}: {body}\nНичего не записано.")
+    except Exception as e:
+        sys.exit(f"не достучался до RouterAI: {type(e).__name__}: {e}\nНичего не записано.")
+    print(f"  ключ рабочий: ответ за {sec} с ({ans!r})")
+    for user in USERS:
+        p = write_env(user, key)
+        v = add_provider(user, key)
+        print(f"  {user}: ключ в {p}, провайдер routerai добавлен | {v}")
+    print("\nГотово. Включить модель в цепочку: sudo yoda-models excash-flash")
+    print(f"Имя модели для кронов и субагентов: routerai/{MODEL}")
+
+
+if __name__ == "__main__":
+    main()

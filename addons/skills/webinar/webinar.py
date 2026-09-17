@@ -41,8 +41,21 @@ MSK = ZoneInfo("Europe/Moscow")
 EVENTS_DIR = f"{OC}/workspace/Эфиры"
 SEG_SEC = 240                                   # кусок для GigaAM, сек: контейнер с лимитом 900 МБ падает на 10-мин, 3–4 мин держит
 SILENCE_DB = -55.0
-CLEAN_MODELS = ["gpt-5.3-codex-spark", "gemini-3.8-flash", "gpt-5.6-luna-1m"]   # Spark: 2400 ток/с, чистка куска ~1 с
-SUM_MODELS = ["gpt-6-astra-1m", "gpt-5.6-luna-1m", "gemini-3.8-flash"]
+def live_models(kind, default):
+    """Живые модели из models_live.json — его раз в полчаса обновляет дозор models-live.
+    17.09: здесь первой стояла codex-spark, потерявшая доступ 16.09, и чистка каждого
+    куска расшифровки начиналась с отказа 403."""
+    try:
+        got = [m for m in json.load(open(f"{OC}/models_live.json", encoding="utf-8")).get(kind, []) if m]
+        if got:
+            return got
+    except Exception:
+        pass
+    return default
+
+
+CLEAN_MODELS = live_models("fast", ["gemini-3.8-flash", "gpt-5.6-luna-1m"])   # чистка кусков расшифровки
+SUM_MODELS = live_models("long", ["gpt-5.6-luna-1m", "gemini-3.8-flash"])     # сводка эфира целиком: нужен 1M
 
 
 def _env():
@@ -145,7 +158,8 @@ def tg_doc(path, caption=""):
     return r.ok
 
 
-DS_KEY = E.get("DEEPSEEK_API_KEY", "")                           # резерв: DeepSeek V4.1 Flash напрямую
+DS_KEY = E.get("DEEPSEEK_API_KEY", "")                           # резерв: DeepSeek V4.1 Flash напрямую (с 17.09 402)
+RT_KEY = E.get("ROUTERAI_API_KEY", "")                           # тот же DeepSeek у RouterAI, оплата в рублях
 GUARD_URL = E.get("EXCASH_GUARD_URL", "http://127.0.0.1:8788")   # страж-прокси OpenClaw: CDN excash режет прямые тела >10 КБ
 
 
@@ -165,6 +179,9 @@ def llm(models, messages, max_tokens, temperature=0.2, timeout=900):
     DeepSeek V4.1 Flash напрямую без рассуждений (иначе они съедают max_tokens)."""
     routes = [(base, EXCASH_KEY, model, {}) for model in models for base in _excash_bases()] \
         if (EXCASH_URL and EXCASH_KEY) else []
+    if RT_KEY:                                                   # другой провайдер: переживает падение excash целиком
+        routes.append(("https://routerai.ru/api/v1", RT_KEY, "deepseek/deepseek-v4.1-flash",
+                       {"reasoning": {"enabled": False}}))
     if DS_KEY:
         routes.append(("https://api.deepseek.com", DS_KEY, "deepseek-flash", {"thinking": {"type": "disabled"}}))
     if not routes:

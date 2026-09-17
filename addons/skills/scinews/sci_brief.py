@@ -38,7 +38,19 @@ TXT_FOR_BRIEF = f"{WS}/memory/sci_alerts_today.txt"
 TOME = f"{WS}/skills/tome/tome.py"
 PY = sys.executable
 MSK = dt.timezone(dt.timedelta(hours=3))
-MODELS = ["gpt-5.3-codex-spark", "gemini-3.8-flash", "gpt-5.6-sol-1m"]   # Spark первым: письма, ранжирование, выжимки — быстро
+def _live_models(kind, default):
+    """Живые модели из models_live.json (обновляет дозор models-live раз в полчаса)."""
+    try:
+        got = [m for m in json.load(open(f"{HOME}/.openclaw/models_live.json",
+                                         encoding="utf-8")).get(kind, []) if m]
+        if got:
+            return got
+    except Exception:
+        pass
+    return default
+
+
+MODELS = _live_models("fast", ["gemini-3.8-flash", "gpt-5.6-luna-1m"])   # письма, ранжирование, выжимки
 READER = sci.ENV.get("SCI_READER", "детский травматолог-ортопед, к.м.н.; интересы: детская травма и ортопедия, "
                      "переломы и остеосинтез, ПКС/мениск, дисплазия ТБС, сколиоз, плоскостопие, косолапость, "
                      "болезнь Пертеса, артроскопия, реабилитация, детская хирургия, ИИ в медицине")
@@ -74,10 +86,14 @@ def ask(prompt, max_tokens=8000, temperature=0.2):
                         if "400" in str(e) or "404" in str(e) or "413" in str(e):
                             break
                     time.sleep(3 * attempt)
-    dk = sci.ENV.get("DEEPSEEK_API_KEY")
+    dk = sci.ENV.get("ROUTERAI_API_KEY") or sci.ENV.get("DEEPSEEK_API_KEY")
     if dk:
         try:
-            txt = sci._llm_once("https://api.deepseek.com/v1", dk, "deepseek-flash",
+            # RouterAI если есть ключ, иначе прямой DeepSeek (у него с 17.09 нулевой баланс)
+            _url, _mdl = (("https://routerai.ru/api/v1", "deepseek/deepseek-v4.1-flash")
+                          if sci.ENV.get("ROUTERAI_API_KEY") else
+                          ("https://api.deepseek.com/v1", "deepseek-flash"))
+            txt = sci._llm_once(_url, dk, _mdl,
                                 [{"role": "user", "content": prompt}], max(max_tokens, 16000), temperature, timeout=600)
             if txt.strip():
                 return txt
@@ -349,7 +365,7 @@ def links_of(a):
 
 # ---------- Word ----------
 def build_docx(brief, path):
-    """Word в палитре сайта владельца: кремовый фон карточек, коралловый акцент, бирюзовый
+    """Word в палитре docsemenov.ru: кремовый фон карточек, коралловый акцент, бирюзовый
     для «что это значит». Слева поле с идентификатором, значимостью и уровнем доказательности,
     первой строкой — библиографическая ссылка."""
     from docx import Document

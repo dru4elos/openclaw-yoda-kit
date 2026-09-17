@@ -1,0 +1,103 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""Живой список моделей: раз в полчаса пробуем каждую и пишем, кто отвечает.
+
+Зачем. 17.09 в webinar.py, sci_brief.py и yoda_tg.py первой в списке стояла
+codex-spark, потерявшая доступ ещё 16.09: 194 отказа за сутки, и каждый съедал
+попытку перед уходом на живую модель. Списков было три, руками их никто не
+правил. Теперь список один, и он обновляется сам.
+
+Пишет /home/openclaw/.openclaw/models_live.json:
+  fast — живые, отсортированы по скорости (чистка кусков, письма, ранжирование)
+  long — живые с контекстом 1M (сводка эфира целиком, большие разборы)
+  dead — кто не ответил и почему (для дозора и объяснений владельцу)
+Потребители читают файл, а при его отсутствии берут свой запасной список.
+"""
+import datetime as dt
+import json
+import os
+import re
+import time
+import urllib.error
+import urllib.request
+
+ENV = "/home/openclaw/.openclaw/.env"
+OUT = "/home/openclaw/.openclaw/models_live.json"
+GUARD = "http://127.0.0.1:8788/chat/completions"   # страж-прокси: он же ловит «200 с ошибкой в потоке»
+MSK = dt.timezone(dt.timedelta(hours=3))
+
+# (модель, годится ли для длинного контекста). Порядок здесь не важен — решает замер.
+CANDIDATES = [
+    ("gemini-3.8-flash", False),
+    ("gpt-5.6-luna-1m", True),
+    ("gpt-6-astra", False),
+    ("gpt-6-astra-1m", True),
+    ("gemini-3.7-flash-tiered", False),
+    ("gpt-5.3-codex-spark", False),
+    ("gpt-5.6-sol-1m", True),
+]
+# Запасной список на случай, если проба не прошла совсем (нет сети, лежит страж).
+SAFE_FAST = ["gemini-3.8-flash", "gpt-5.6-luna-1m"]
+SAFE_LONG = ["gpt-5.6-luna-1m", "gemini-3.8-flash"]
+
+
+def env(name):
+    try:
+        m = re.search(rf"^{name}=(.*)$", open(ENV, encoding="utf-8").read(), re.M)
+        return m.group(1).strip().strip('"').strip("'") if m else ""
+    except Exception:
+        return ""
+
+
+def probe(model, key, timeout=60):
+    """Возвращает (секунды, "") если ответила, иначе (None, причина)."""
+    body = {"model": model, "messages": [{"role": "user", "content": "ok?"}], "max_tokens": 5}
+    req = urllib.request.Request(
+        GUARD, data=json.dumps(body).encode(),
+        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            r.read()
+        return round(time.time() - t0, 1), ""
+    except urllib.error.HTTPError as e:
+        return None, f"HTTP {e.code}"
+    except Exception as e:
+        return None, type(e).__name__
+
+
+def main():
+    key = env("EXCASH_API_KEY")
+    if not key:
+        raise SystemExit("нет EXCASH_API_KEY в " + ENV)
+    ok, dead = {}, {}
+    long_ok = set()
+    for model, is_long in CANDIDATES:
+        sec, why = probe(model, key)
+        if sec is None:
+            dead[model] = why
+        else:
+            ok[model] = sec
+            if is_long:
+                long_ok.add(model)
+    fast = sorted(ok, key=lambda m: ok[m])
+    long = sorted(long_ok, key=lambda m: ok[m])
+    data = {
+        "checked": dt.datetime.now(MSK).isoformat(timespec="seconds"),
+        "fast": fast or SAFE_FAST,
+        "long": long or [m for m in fast if m] or SAFE_LONG,
+        "dead": dead,
+        "sec": ok,
+    }
+    tmp = OUT + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, OUT)          # замена целиком: читатель никогда не увидит полфайла
+    os.chmod(OUT, 0o644)          # читают обе Йоды
+    print(f"живые: {', '.join(f'{m} {ok[m]}с' for m in fast) or '—'}")
+    print(f"длинный контекст: {', '.join(long) or '—'}")
+    print(f"мёртвые: {', '.join(f'{m} ({w})' for m, w in dead.items()) or '—'}")
+
+
+if __name__ == "__main__":
+    main()

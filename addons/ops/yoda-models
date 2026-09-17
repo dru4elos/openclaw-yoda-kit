@@ -1,44 +1,54 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""yoda-models excash|excash-flash|deepseek [--no-restart] — переключить модели ОБОИХ Йод (openclaw, yoda2) и пины кронов.
-excash: основная gpt-6-astra (272k), резервы astra-1m → sol-1m → gemini-3.8-flash → … → DeepSeek V4.1 Flash;
-        дешёвое — gemini-3.8-flash, субагенты — Luna 1M (поисковых Astra по своему выбору пускает на DeepSeek V4.1 Flash).
-deepseek: ВСЯ Йода на DeepSeek V4.1 Flash (id deepseek-flash: 1M контекста, 240 ток/с, картинки, ~10-20× дешевле
-        Astra за счёт кэша префикса). Когда excash лежит/ключ отозван или хочется сэкономить. Ничего из excash
-        в цепочке (чтобы не ловить бан IP). Рассуждения выключены (thinkingDefault off): с ними DeepSeek тратит
-        5-11 тыс. токенов и 20-45 с на простой ответ; в чате можно включить командой /think.
-Обратно: sudo yoda-models excash. Обе команды: правят openclaw.json обеих Йод, пины кронов, перезапускают шлюзы (~1 мин)."""
+"""yoda-models excash|excash-flash|deepseek [--no-restart] — переключить модели ОБЕИХ Йод (openclaw, yoda2) и пины кронов.
+excash:       основная GPT-6 Astra (272k), резервы Astra 1M → Luna 1M → DeepSeek V4.1 Flash (RouterAI) → Gemini.
+excash-flash: основная Gemini 3.8 Flash, резервы Luna 1M → DeepSeek V4.1 Flash (RouterAI) → Gemini 3.7.
+              Astra из цепочки убрана: с 16.09 отвечает 500. Дозор напишет, когда оживёт.
+deepseek:     ВСЯ Йода на DeepSeek V4.1 Flash через RouterAI (1M контекста, картинки, оплата в рублях),
+              резерв — Gemini 3.8 Flash. Рассуждения выключены (в чате включаются командой /think).
+Ключ RouterAI ставится отдельно и вводится владельцем: sudo yoda-key routerai.
+Обе команды правят openclaw.json обеих Йод, пины кронов и перезапускают шлюзы (~1 мин)."""
 import json, os, pwd, re, subprocess, sys, time
+
+# DeepSeek V4.1 Flash берём у RouterAI (рубли, оплата из России). Прямой api.deepseek.com
+# с 17.09 отвечает 402: баланс кончился, а пополнять его из России неудобно.
+DS = "routerai/deepseek/deepseek-v4.1-flash"
 
 PROFILES = {
     # 272k-Astra вдвое дешевле 1M (50 ₽/M против 100) и заставляет сжимать историю около 200k;
     # 1M — первый резерв на переполнение и пин утреннего брифа. Heartbeat — на flash в лёгком режиме.
     "excash": {"primary": "excash/gpt-6-astra",
                # 16.09: sol-1m отвечал ошибкой 36 из 36 раз; gemini-3.8-flash на «перегружен» (529) обрывает ход,
-               # а не уходит к следующему резерву — поэтому DeepSeek раньше Gemini
-               "fallbacks": ["excash/gpt-6-astra-1m", "excash/gpt-5.6-luna-1m", "dseek/deepseek-flash",
+               # а не уходит к следующему резерву — поэтому чужой провайдер раньше Gemini
+               "fallbacks": ["excash/gpt-6-astra-1m", "excash/gpt-5.6-luna-1m", DS,
                              "excash/gemini-3.8-flash", "excash/gemini-3.7-flash-tiered"],
                "cheap": "excash/gemini-3.8-flash", "brief": "excash/gpt-6-astra-1m", "heartbeat": "excash/gemini-3.8-flash",
                # субагенты по умолчанию — Luna 1M (рассуждает); для поиска/сбора источников Astra сама запускает
-               # sessions_spawn с model dseek/deepseek-flash и thinking off (241 ток/с против 58, в разы дешевле) —
-               # правило в AGENTS.md «💸 Модели». DeepSeek здесь же резерв, если Luna недоступна.
-               "subagents": {"primary": "excash/gpt-5.6-luna-1m", "fallbacks": ["dseek/deepseek-flash"]},
-               "think": "adaptive"},   # субагенты: Luna 1M (рассуждает, 1M контекста) — по наблюдениям из практики лучше на многошаговых задачах; Spark — конвейеры
-    # deepseek-v4-pro с 14.09.2026 сам перенаправляется на V4.1 Flash — отдельной «про» больше нет
-    # excash-flash: excash, но основная — Gemini 3.8 Flash. На случай, когда GPT-6 Astra на excash сбоит
-    # (16–17.09 отвечала 500 «internal error»): Astra в резерве, DeepSeek не в цепочке (пустой баланс = 402).
-    # Когда Astra оживёт (дозор напишет «снова отвечает») — sudo yoda-models excash.
+               # sessions_spawn с DeepSeek V4.1 Flash и thinking off (241 ток/с против 58, в разы дешевле) —
+               # правило в AGENTS.md «💸 Модели». Он же резерв, если Luna недоступна.
+               "subagents": {"primary": "excash/gpt-5.6-luna-1m", "fallbacks": [DS]},
+               "think": "adaptive"},
+    # excash-flash: основная — Gemini 3.8 Flash. На случай, когда GPT-6 Astra на excash сбоит
+    # (16–17.09 отвечала 500 «internal error»).
+    # 17.09: Astra и Astra 1M убраны из цепочки совсем — они лежали сутки, а каждая попытка
+    # стоила владельцу 20–60 с ожидания. Дозор напишет, когда оживут: sudo yoda-models excash.
+    # Третьим стоит DeepSeek через RouterAI: это ДРУГОЙ провайдер, поэтому когда excash отдаёт
+    # 504/500 целиком (как 17.09 в 21:24), ход не обрывается, а доигрывается на нём.
     "excash-flash": {"primary": "excash/gemini-3.8-flash",
-                     "fallbacks": ["excash/gpt-5.6-luna-1m", "excash/gpt-6-astra", "excash/gpt-6-astra-1m",
-                                   "excash/gemini-3.7-flash-tiered"],
+                     "fallbacks": ["excash/gpt-5.6-luna-1m", DS, "excash/gemini-3.7-flash-tiered"],
                      "cheap": "excash/gemini-3.8-flash", "brief": "excash/gpt-5.6-luna-1m",
                      "heartbeat": "excash/gemini-3.8-flash",
-                     "subagents": {"primary": "excash/gpt-5.6-luna-1m", "fallbacks": ["excash/gemini-3.8-flash"]},
+                     "subagents": {"primary": "excash/gpt-5.6-luna-1m", "fallbacks": ["excash/gemini-3.8-flash", DS]},
                      "think": "adaptive"},
-    "deepseek": {"primary": "dseek/deepseek-flash", "fallbacks": [],
-                 "cheap": "dseek/deepseek-flash", "brief": "dseek/deepseek-flash", "heartbeat": "dseek/deepseek-flash",
-                 "subagents": "dseek/deepseek-flash", "subthink": "off", "think": "off"},
+    # ВСЯ Йода на DeepSeek V4.1 Flash через RouterAI (рубли, российская оплата): 1M контекста,
+    # картинки, дёшево. Когда excash лежит целиком или хочется сэкономить.
+    # Рассуждения выключены: с ними V4.1 Flash тратит 5–11 тыс. токенов и 20–45 с на простую реплику
+    # (в чате включается командой /think).
+    "deepseek": {"primary": DS, "fallbacks": ["excash/gemini-3.8-flash"],
+                 "cheap": DS, "brief": DS, "heartbeat": DS,
+                 "subagents": DS, "subthink": "off", "think": "off"},
 }
+
 CRON_PINS = {"openclaw": {"Утренний брифинг": "brief", "Вечерний дайджест": "cheap"}}   # по началу имени крона
 
 
@@ -53,12 +63,30 @@ def patch(user, prof):
     cfg = json.load(open(c, encoding="utf-8"))
     os.replace(c, f"{c}.pre-models.{int(time.time())}") if False else None
     open(f"{c}.pre-models.{int(time.time())}", "w", encoding="utf-8").write(json.dumps(cfg, ensure_ascii=False, indent=2))
+    known = set(cfg.get("models", {}).get("providers", {}))
+    def live(ref):
+        """Отбрасывает модели неподключённого провайдера: одна такая ссылка валит весь конфиг."""
+        if isinstance(ref, str) and "/" in ref and ref.split("/")[0] not in known:
+            print(f"  ⚠️ {user}: провайдер «{ref.split('/')[0]}» не подключён — пропускаю {ref}"
+                  " (подключить: sudo yoda-key routerai)")
+            return False
+        return True
+
     d = cfg["agents"]["defaults"]
-    d["model"] = {"primary": prof["primary"], "fallbacks": prof["fallbacks"]}
+    chain = [m for m in ([prof["primary"]] + prof["fallbacks"]) if live(m)]
+    if not chain:
+        sys.exit(f"!! у {user} не осталось ни одной доступной модели — конфиг не тронут")
+    d["model"] = {"primary": chain[0], "fallbacks": chain[1:]}
     if prof.get("think"):
         d["thinkingDefault"] = prof["think"]   # deepseek: off (рассуждения V4.1 Flash медленные и дорогие на простых репликах)
     if isinstance(d.get("subagents"), dict):
-        d["subagents"]["model"] = prof.get("subagents", prof["cheap"])
+        sub = prof.get("subagents", prof["cheap"])
+        if isinstance(sub, dict):
+            subchain = [m for m in ([sub["primary"]] + sub.get("fallbacks", [])) if live(m)]
+            sub = {"primary": subchain[0], "fallbacks": subchain[1:]} if subchain else prof["cheap"]
+        elif not live(sub):
+            sub = prof["cheap"]
+        d["subagents"]["model"] = sub
         if prof.get("subthink"):
             d["subagents"]["thinking"] = prof["subthink"]   # off: у DeepSeek рассуждения съедают 5-11 тыс. токенов и 20-45 с
         else:
@@ -70,6 +98,9 @@ def patch(user, prof):
     am = cfg.get("plugins", {}).get("entries", {}).get("active-memory", {}).get("config", {})
     if "model" in am:
         am["model"] = prof["cheap"]
+    for k in ("cheap", "brief", "heartbeat"):
+        if not live(prof[k]):
+            prof = dict(prof, **{k: "excash/gemini-3.8-flash"})
     hb = d.setdefault("heartbeat", {})
     if isinstance(hb, dict):
         hb["model"] = prof["heartbeat"]
@@ -80,7 +111,7 @@ def patch(user, prof):
     uid, gid = pwd.getpwnam(user).pw_uid, pwd.getpwnam(user).pw_gid
     os.chown(c, uid, gid)
     r = run_as(user, "openclaw config validate 2>&1 | tail -1")
-    print(f"  {user}: {prof['primary']} | {r.stdout.strip()}")
+    print(f"  {user}: {d['model']['primary']} | {r.stdout.strip()}")
     if "valid" not in r.stdout.lower():
         sys.exit(f"!! конфиг {user} невалиден — рестарта не будет")
 
