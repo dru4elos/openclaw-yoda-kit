@@ -41,6 +41,13 @@ def sh(cmd, **kw):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True, **kw)
 
 
+def theme_for(cwd):
+    """Своя тема рядом с докладом (theme.css) главнее общей sci.css. 22.09 доктор: «почему все
+    презентации одинаковые» — тема была прибита гвоздями, и продуктовая выглядела как научная."""
+    own = os.path.join(cwd, "theme.css")
+    return own if os.path.exists(own) else THEME
+
+
 def marp(args_str, cwd):
     """Запуск marp с граблями, которые иначе ловишь глазами:
     --allow-local-files (иначе картинки молча не подгружаются),
@@ -48,7 +55,7 @@ def marp(args_str, cwd):
     env = ("export NVM_DIR=$HOME/.nvm; . $NVM_DIR/nvm.sh; "
            "export CHROME_PATH=${CHROME_PATH:-/snap/bin/chromium} CHROME_NO_SANDBOX=true; ")
     return sh(f'bash -lc \'{env} cd "{cwd}" && marp {args_str} '
-              f'--theme "{THEME}" --allow-local-files --no-stdin\'')
+              f'--theme "{theme_for(cwd)}" --allow-local-files --no-stdin\'')
 
 
 # ─────────────────────────── разбор колоды ────────────────────────────
