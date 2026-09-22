@@ -7,7 +7,8 @@ excash-flash: основная Gemini 3.8 Flash, резервы Luna 1M → Deep
 deepseek:     ВСЯ Йода на DeepSeek V4.1 Flash через RouterAI (1M контекста, картинки, оплата в рублях),
               резерв — Gemini 3.8 Flash. Рассуждения выключены (в чате включаются командой /think).
 Ключ RouterAI ставится отдельно и вводится владельцем: sudo yoda-key routerai.
-Обе команды правят openclaw.json обеих Йод, пины кронов и перезапускают шлюзы (~1 мин)."""
+Обе команды правят openclaw.json обеих Йод, пины кронов и перезапускают шлюзы (~1 мин).
+--only openclaw|yoda2 — только одну Йоду: у доктора и Маши могут быть разные модели."""
 import json, os, pwd, re, subprocess, sys, time
 
 # DeepSeek V4.1 Flash берём у RouterAI (рубли, оплата из России). Прямой api.deepseek.com
@@ -120,7 +121,13 @@ def main():
     if len(sys.argv) < 2 or sys.argv[1] not in PROFILES:
         sys.exit(__doc__)
     prof = PROFILES[sys.argv[1]]
-    for user in ("openclaw", "yoda2"):
+    users = ("openclaw", "yoda2")
+    if "--only" in sys.argv:
+        who = sys.argv[sys.argv.index("--only") + 1]
+        if who not in users:
+            sys.exit(f"--only: openclaw или yoda2, а не {who}")
+        users = (who,)
+    for user in users:
         patch(user, prof)
         pins = CRON_PINS.get(user, {})
         if pins:
@@ -158,12 +165,17 @@ def main():
                 print(f"  пины кронов {user}: сверены, в порядке")
     if "--no-restart" in sys.argv:
         return
-    for user in ("openclaw", "yoda2"):
+    # 22.09: перезапуск шлюза гасит всё, что запущено изнутри Йоды, включая ffmpeg записи эфира
+    if subprocess.run(["pgrep", "-x", "ffmpeg"], capture_output=True).returncode == 0:
+        print("  ⚠️ идёт запись эфира — шлюзы НЕ перезапускаю, иначе запись оборвётся. Повтори после эфира.")
+        return
+    for user in users:
         subprocess.run(["su", "-", user, "-c", "XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart openclaw-gateway"])
     for _ in range(40):
         time.sleep(3)
         s = subprocess.run(["ss", "-ltn"], capture_output=True, text=True).stdout
-        if ":18789 " in s and ":18790 " in s:
+        want = [p for u, p in (("openclaw", ":18789 "), ("yoda2", ":18790 ")) if u in users]
+        if all(p in s for p in want):
             break
     print("  гейтвеи перезапущены, порты слушают:", ":18789 " in s, ":18790 " in s)
 

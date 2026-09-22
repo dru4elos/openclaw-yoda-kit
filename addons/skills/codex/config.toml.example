@@ -1,0 +1,29 @@
+# Codex CLI Йоды: модели excash через страж-прокси (он же ловит «200 с ошибкой в потоке» и отдаёт 502,
+# чтобы Codex повторил запрос). Codex ходит только в /v1/responses — страж пропускает любой путь.
+model_provider = "excash"
+model = "gpt-6-astra"
+model_reasoning_effort = "high"
+# Окно ниже реального лимита модели (272k у базовых astra/luna): иначе после длинной задачи excash
+# начинает отвечать «internal error» на каждый запрос (разобрано на Маке 05.09).
+model_context_window = 250_000
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+check_for_update_on_startup = false
+
+[sandbox_workspace_write]
+network_access = true           # пакеты, открытые данные, API
+
+[shell_environment_policy]
+inherit = "core"                # в команды, которые запускает модель, ключи из окружения не попадают
+
+[model_providers.excash]
+name = "Excash"
+base_url = "http://127.0.0.1:8788"
+env_key = "EXCASH_API_KEY"
+wire_api = "responses"
+request_max_retries = 4
+stream_max_retries = 5
+
+# Профили в Codex ≥0.155 — отдельные файлы рядом: astra.config.toml, luna.config.toml, deep.config.toml
+# (model и model_reasoning_effort). Таблица [profiles.x] здесь ломает `codex exec -p`.
+# Песочница на Ubuntu 24.04 требует AppArmor-профиль с `userns,` для bwrap — см. README кита.
