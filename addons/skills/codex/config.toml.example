@@ -1,7 +1,7 @@
 # Codex CLI Йоды: модели excash через страж-прокси (он же ловит «200 с ошибкой в потоке» и отдаёт 502,
 # чтобы Codex повторил запрос). Codex ходит только в /v1/responses — страж пропускает любой путь.
 model_provider = "excash"
-model = "gpt-6-astra"
+model = "gpt-6-sol"
 model_reasoning_effort = "high"
 # Окно ниже реального лимита модели (272k у базовых astra/luna): иначе после длинной задачи excash
 # начинает отвечать «internal error» на каждый запрос (разобрано на Маке 05.09).

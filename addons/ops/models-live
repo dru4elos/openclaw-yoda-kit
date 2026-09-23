@@ -28,6 +28,10 @@ MSK = dt.timezone(dt.timedelta(hours=3))
 
 # (модель, годится ли для длинного контекста). Порядок здесь не важен — решает замер.
 CANDIDATES = [
+    ("gpt-6-sol", False),
+    ("gpt-6-sol-1m", True),
+    ("gpt-6-luna", False),
+    ("gpt-6-luna-1m", True),
     ("gemini-3.8-flash", False),
     ("gpt-5.6-luna-1m", True),
     ("gpt-6-astra", False),
@@ -37,8 +41,8 @@ CANDIDATES = [
     ("gpt-5.6-sol-1m", True),
 ]
 # Запасной список на случай, если проба не прошла совсем (нет сети, лежит страж).
-SAFE_FAST = ["gemini-3.8-flash", "gpt-5.6-luna-1m"]
-SAFE_LONG = ["gpt-5.6-luna-1m", "gemini-3.8-flash"]
+SAFE_FAST = ["gpt-6-luna", "gemini-3.8-flash"]
+SAFE_LONG = ["gpt-6-luna-1m", "gpt-6-sol-1m"]
 
 
 def env(name):

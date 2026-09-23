@@ -2,8 +2,8 @@
 # Codex CLI как программист и аналитик на одну задачу в проекте Йоды.
 # Только внутри ~/projects/<репо>; песочница workspace-write — пишет только в этот репозиторий и /tmp,
 # сеть есть (пакеты, данные, API). Модели excash через страж-прокси: ~/.codex/config.toml,
-# профили — ~/.codex/{astra,luna,deep}.config.toml.
-#   codex_run.sh <репо> "<задача>" [--profile astra|luna|deep] [--timeout СЕК]
+# профили — ~/.codex/{sol,astra,luna,deep}.config.toml.
+#   codex_run.sh <репо> "<задача>" [--profile sol|astra|luna|deep] [--timeout СЕК]
 #   codex_run.sh --check        проверить, что песочница на сервере работает
 set -uo pipefail
 source ~/.nvm/nvm.sh >/dev/null 2>&1
@@ -26,13 +26,13 @@ if [ "${1:-}" = "--check" ]; then
   rm -rf "$T" "$P"; exit 0
 fi
 
-usage() { echo "codex_run.sh <репо в ~/projects> \"<задача>\" [--profile astra|luna|deep] [--timeout СЕК]  |  codex_run.sh --check"; exit 2; }
+usage() { echo "codex_run.sh <репо в ~/projects> \"<задача>\" [--profile sol|astra|luna|deep] [--timeout СЕК]  |  codex_run.sh --check"; exit 2; }
 [ $# -ge 2 ] || usage
 REPO=$1; TASK=$2; shift 2
-PROFILE=astra; TO=3600
+PROFILE=sol; TO=3600
 while [ $# -gt 0 ]; do case $1 in --profile) PROFILE=$2; shift 2;; --timeout) TO=$2; shift 2;; *) usage;; esac; done
 [[ "$REPO" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "имя репозитория: латиница, цифры, точка, дефис"; exit 2; }
-case $PROFILE in astra|luna|deep) ;; *) usage;; esac
+case $PROFILE in sol|astra|luna|deep) ;; *) usage;; esac
 DIR=$HOME/projects/$REPO
 [ -d "$DIR/.git" ] || { echo "нет репозитория $DIR — сначала: projects.py clone $REPO"; exit 2; }
 EXCASH_API_KEY=$(grep '^EXCASH_API_KEY=' "$HOME/.openclaw/.env" | cut -d= -f2- | tr -d "\"'")

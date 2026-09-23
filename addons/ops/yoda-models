@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""yoda-models excash|excash-flash|deepseek [--no-restart] — переключить модели ОБЕИХ Йод (openclaw, yoda2) и пины кронов.
+"""yoda-models gpt6|excash|excash-flash|deepseek [--no-restart] — переключить модели ОБЕИХ Йод (openclaw, yoda2) и пины кронов.
+gpt6:         основная GPT-6 Sol, тяжёлое — Astra, рутина — Luna 6 (решение доктора 23.09).
 excash:       основная GPT-6 Astra (272k), резервы Astra 1M → Luna 1M → DeepSeek V4.1 Flash (RouterAI) → Gemini.
 excash-flash: основная Gemini 3.8 Flash, резервы Luna 1M → DeepSeek V4.1 Flash (RouterAI) → Gemini 3.7.
               Astra из цепочки убрана: с 16.09 отвечает 500. Дозор напишет, когда оживёт.
@@ -18,16 +19,25 @@ DS = "routerai/deepseek/deepseek-v4.1-flash"
 PROFILES = {
     # 272k-Astra вдвое дешевле 1M (50 ₽/M против 100) и заставляет сжимать историю около 200k;
     # 1M — первый резерв на переполнение и пин утреннего брифа. Heartbeat — на flash в лёгком режиме.
+    # 23.09 решение доктора — роли по GPT-6: Sol делает основную работу, Astra — тяжёлые расчёты
+    # (подключается сама как резерв и по команде /astra), Luna — рутина: пульс, сжатие памяти,
+    # вечерний дайджест. Luna 6 отвечает за 1–2 с, Sol за 2–3 с, Astra за 8–11 с (замер 23.09).
+    "gpt6": {"primary": "excash/gpt-6-sol",
+             "fallbacks": ["excash/gpt-6-sol-1m", "excash/gpt-6-astra", "excash/gpt-6-luna-1m", DS,
+                           "excash/gemini-3.8-flash"],
+             "cheap": "excash/gpt-6-luna", "brief": "excash/gpt-6-sol-1m", "heartbeat": "excash/gpt-6-luna",
+             "subagents": {"primary": "excash/gpt-6-sol", "fallbacks": ["excash/gpt-6-luna-1m", DS]},
+             "think": "adaptive"},
     "excash": {"primary": "excash/gpt-6-astra",
                # 16.09: sol-1m отвечал ошибкой 36 из 36 раз; gemini-3.8-flash на «перегружен» (529) обрывает ход,
                # а не уходит к следующему резерву — поэтому чужой провайдер раньше Gemini
-               "fallbacks": ["excash/gpt-6-astra-1m", "excash/gpt-5.6-luna-1m", DS,
+               "fallbacks": ["excash/gpt-6-astra-1m", "excash/gpt-6-luna-1m", DS,
                              "excash/gemini-3.8-flash", "excash/gemini-3.7-flash-tiered"],
                "cheap": "excash/gemini-3.8-flash", "brief": "excash/gpt-6-astra-1m", "heartbeat": "excash/gemini-3.8-flash",
                # субагенты по умолчанию — Luna 1M (рассуждает); для поиска/сбора источников Astra сама запускает
                # sessions_spawn с DeepSeek V4.1 Flash и thinking off (241 ток/с против 58, в разы дешевле) —
                # правило в AGENTS.md «💸 Модели». Он же резерв, если Luna недоступна.
-               "subagents": {"primary": "excash/gpt-5.6-luna-1m", "fallbacks": [DS]},
+               "subagents": {"primary": "excash/gpt-6-luna-1m", "fallbacks": [DS]},
                "think": "adaptive"},
     # excash-flash: основная — Gemini 3.8 Flash. На случай, когда GPT-6 Astra на excash сбоит
     # (16–17.09 отвечала 500 «internal error»).
@@ -36,10 +46,10 @@ PROFILES = {
     # Третьим стоит DeepSeek через RouterAI: это ДРУГОЙ провайдер, поэтому когда excash отдаёт
     # 504/500 целиком (как 17.09 в 21:24), ход не обрывается, а доигрывается на нём.
     "excash-flash": {"primary": "excash/gemini-3.8-flash",
-                     "fallbacks": ["excash/gpt-5.6-luna-1m", DS, "excash/gemini-3.7-flash-tiered"],
-                     "cheap": "excash/gemini-3.8-flash", "brief": "excash/gpt-5.6-luna-1m",
+                     "fallbacks": ["excash/gpt-6-luna-1m", DS, "excash/gemini-3.7-flash-tiered"],
+                     "cheap": "excash/gemini-3.8-flash", "brief": "excash/gpt-6-luna-1m",
                      "heartbeat": "excash/gemini-3.8-flash",
-                     "subagents": {"primary": "excash/gpt-5.6-luna-1m", "fallbacks": ["excash/gemini-3.8-flash", DS]},
+                     "subagents": {"primary": "excash/gpt-6-luna-1m", "fallbacks": ["excash/gemini-3.8-flash", DS]},
                      "think": "adaptive"},
     # ВСЯ Йода на DeepSeek V4.1 Flash через RouterAI (рубли, российская оплата): 1M контекста,
     # картинки, дёшево. Когда excash лежит целиком или хочется сэкономить.
