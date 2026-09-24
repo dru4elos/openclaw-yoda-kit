@@ -181,7 +181,7 @@ def llm(models, messages, max_tokens, temperature=0.2, timeout=900):
         if (EXCASH_URL and EXCASH_KEY) else []
     if RT_KEY:                                                   # другой провайдер: переживает падение excash целиком
         routes.append(("https://routerai.ru/api/v1", RT_KEY, "deepseek/deepseek-v4.1-flash",
-                       {"reasoning": {"enabled": False}}))
+                       {"thinking": {"type": "disabled"}}))
     if DS_KEY:
         routes.append(("https://api.deepseek.com", DS_KEY, "deepseek-flash", {"thinking": {"type": "disabled"}}))
     if not routes:
@@ -445,6 +445,8 @@ def stage_notify(out, title, video, mean_db, test=False):
     if ok and not test:
         st = st_load(out)
         st["delivered_at"] = datetime.now(MSK).isoformat(timespec="seconds")
+        # 24.09 правило доктора: конспект доставлен — сегменты, wav и chunks больше не нужны
+        subprocess.run(["/usr/local/bin/efir-cleanup", "--out", out], capture_output=True, text=True, timeout=120)
         st_save(out, st)
     return ok
 
@@ -580,6 +582,74 @@ def join_message(title, url, out, slug, until, start_hm, organizer="", rejoin=Fa
     return "\n".join(steps)
 
 
+def _notify(text):
+    """Одна строка владельцу через tome (без модели). Ошибка доставки не должна ронять запись."""
+    try:
+        sh([PY, f"{SKILLS}/tome/tome.py", "msg", text], timeout=60)
+    except Exception:
+        pass
+
+
+def _webrec(args, timeout=180):
+    r = sh([PY, WEBREC] + args, timeout=timeout)
+    try:
+        return r.returncode, json.loads((r.stdout or "").strip().splitlines()[-1])
+    except Exception:
+        return r.returncode, {"raw": ((r.stdout or "") + (r.stderr or "")).strip()[-300:]}
+
+
+def cmd_autostart(a):
+    """Старт записи без модели: открыть комнату, включить ffmpeg, снять mute, проверить звук, доложить.
+    Идемпотентно: запись уже идёт — только проверка звука. Зовётся таймерами из cmd_plan."""
+    out = os.path.abspath(a.out)
+    plan = json.load(open(os.path.join(out, "plan.json"), encoding="utf-8"))
+    title, url, slug = plan["title"], plan.get("url", ""), plan["slug"]
+    until = (datetime.fromisoformat(plan["end"]) + timedelta(minutes=10)).strftime("%H:%M")
+    tag = "автозапуск" if not a.recheck else "автопроверка"
+    if not url or not url.startswith("http"):
+        log(out, f"{tag}: ссылки на комнату нет — ждём агента"); return
+    _rc, st = _webrec(["status", "--out", out], 60)
+    started = False
+    if not st.get("recording"):
+        rc, op = _webrec(["open", "--url", url, "--out", out, "--close-others"], 180)
+        if rc != 0 or not op.get("ok"):
+            log(out, f"{tag}: комната не открылась: {op}")
+            if not a.quiet:
+                _notify(f"⚠️ «{title}»: {tag} не смог открыть комнату ({str(op)[:120]}). Агент попробует сам.")
+            return
+        rc, sr = _webrec(["start", "--out", out, "--name", slug, "--until", until], 120)
+        started = rc == 0
+        log(out, f"{tag}: start rc={rc} {str(sr)[:200]}")
+        time.sleep(25)                       # странице нужно загрузить плеер, иначе замер звука пустой
+    for _ in range(4):
+        _webrec(["unmute", "--out", out], 120)
+        _rc, pr = _webrec(["probe"], 90)
+        if pr.get("sound"):
+            break
+        time.sleep(15)
+    sound = bool(pr.get("sound"))
+    _rc, st2 = _webrec(["status", "--out", out], 60)
+    line = (f"{'🔴' if st2.get('recording') else '⚠️'} «{title}»: {tag} — запись "
+            f"{'идёт' if st2.get('recording') else 'НЕ идёт'}"
+            f"{' (только что запущена)' if started else ''}, звук {'есть' if sound else 'НЕТ — если комната требует входа, агент войдёт сам'}.")
+    log(out, line)
+    if not a.quiet:
+        _notify(line)
+    print(json.dumps({"recording": bool(st2.get("recording")), "sound": sound, "started": started}, ensure_ascii=False))
+
+
+def _systemd_timer(unit, when_msk, argv, out):
+    """Разовый таймер systemd пользователя Йоды: никакой модели, только часы и команда."""
+    env = dict(os.environ, XDG_RUNTIME_DIR=f"/run/user/{os.getuid()}")
+    subprocess.run(["systemctl", "--user", "stop", f"{unit}.timer"], capture_output=True, env=env)
+    on = when_msk.strftime("%Y-%m-%d %H:%M:%S")
+    r = subprocess.run(["systemd-run", "--user", "--unit", unit, "--on-calendar", on, "--timer-property=AccuracySec=1s",
+                        "--collect"] + argv, capture_output=True, text=True, env=env)
+    ok = r.returncode == 0
+    log(out, f"таймер {unit} на {on}: " + ("ok" if ok else (r.stderr or "").strip()[-200:]))
+    return ok, (r.stderr or "").strip()[-200:]
+
+
 def cmd_rejoin(a):
     """Заказать перезаход в комнату: разовый крон фонового агента через минуту.
     Зовёт сторож записи (webrec watch), когда вкладка комнаты пропала; не чаще раза в 8 минут."""
@@ -701,6 +771,15 @@ def cmd_plan(a):
                              "err": (r.stderr or "").strip()[-200:] if r.returncode else ""})
         print(f"{'✓' if r.returncode == 0 else '✗'} {name} @ {at} {jid or (r.stderr or '')[-160:]}")
     json.dump(plan, open(os.path.join(out, "plan.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    if not a.dry_run:
+        # 24.09: запись стартует и без модели — таймеры systemd зовут autostart (см. cmd_autostart)
+        plan["timers"] = []
+        for suffix, when, extra in (("start", s - timedelta(minutes=3), []), ("check", s + timedelta(minutes=4), ["--recheck"])):
+            unit = f"efir-{suffix}-{slug[:40]}"
+            ok, err = _systemd_timer(unit, when, [PY, SELF, "autostart", "--out", out] + extra, out)
+            plan["timers"].append({"unit": unit, "at_msk": when.isoformat(timespec="minutes"), "ok": ok, "err": err})
+            print(f"{'✓' if ok else '✗'} таймер {unit} @ {when.strftime('%d.%m %H:%M')} {err}")
+        json.dump(plan, open(os.path.join(out, "plan.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print(json.dumps({"out": out, "slug": slug, "start_msk": s.strftime("%d.%m %H:%M"), "end_msk": e.strftime("%H:%M"),
                       "jobs": len(plan["jobs"]), "failed": sum(1 for j in plan["jobs"] if not j["ok"])}, ensure_ascii=False))
 
@@ -895,6 +974,10 @@ def main():
                              "summarize": lambda a: stage_summarize(os.path.abspath(a.out), a.title or os.path.basename(a.out), a.focus),
                              "notify": lambda a: stage_notify(os.path.abspath(a.out), a.title or os.path.basename(a.out),
                                                               find_full(os.path.abspath(a.out)), st_load(os.path.abspath(a.out)).get("mean_db"), a.test)}[name])
+    au = sub.add_parser("autostart", help="старт записи без модели: открыть комнату, ffmpeg, звук, доклад")
+    au.add_argument("--out", required=True); au.add_argument("--recheck", action="store_true")
+    au.add_argument("--quiet", action="store_true", help="не писать владельцу (для проверок)")
+    au.set_defaults(func=cmd_autostart)
     rj = sub.add_parser("rejoin", help="заказать перезаход в комнату (зовёт сторож записи)"); rj.add_argument("--out", required=True)
     rj.add_argument("--start-recording", action="store_true"); rj.add_argument("--force", action="store_true")
     rj.set_defaults(func=cmd_rejoin)
