@@ -25,7 +25,7 @@ PROFILES = {
     "gpt6": {"primary": "excash/gpt-6-sol",
              "fallbacks": ["excash/gpt-6-sol-1m", "excash/gpt-6-astra", "excash/gpt-6-luna-1m", DS,
                            "excash/gemini-3.8-flash"],
-             "cheap": "excash/gpt-6-luna", "brief": "excash/gpt-6-sol-1m", "heartbeat": "excash/gpt-6-luna",
+             "cheap": "excash/gpt-6-luna", "compact": "excash/gpt-6-luna-1m", "brief": "excash/gpt-6-sol-1m", "heartbeat": "excash/gpt-6-luna",
              "subagents": {"primary": "excash/gpt-6-sol", "fallbacks": ["excash/gpt-6-luna-1m", DS]},
              "think": "adaptive"},
     "excash": {"primary": "excash/gpt-6-astra",
@@ -33,7 +33,7 @@ PROFILES = {
                # а не уходит к следующему резерву — поэтому чужой провайдер раньше Gemini
                "fallbacks": ["excash/gpt-6-astra-1m", "excash/gpt-6-luna-1m", DS,
                              "excash/gemini-3.8-flash", "excash/gemini-3.7-flash-tiered"],
-               "cheap": "excash/gemini-3.8-flash", "brief": "excash/gpt-6-astra-1m", "heartbeat": "excash/gemini-3.8-flash",
+               "cheap": "excash/gemini-3.8-flash", "compact": "excash/gpt-6-luna-1m", "brief": "excash/gpt-6-astra-1m", "heartbeat": "excash/gemini-3.8-flash",
                # субагенты по умолчанию — Luna 1M (рассуждает); для поиска/сбора источников Astra сама запускает
                # sessions_spawn с DeepSeek V4.1 Flash и thinking off (241 ток/с против 58, в разы дешевле) —
                # правило в AGENTS.md «💸 Модели». Он же резерв, если Luna недоступна.
@@ -102,10 +102,13 @@ def patch(user, prof):
             d["subagents"]["thinking"] = prof["subthink"]   # off: у DeepSeek рассуждения съедают 5-11 тыс. токенов и 20-45 с
         else:
             d["subagents"].pop("thinking", None)
+    # 24.09: сжатие и сброс памяти читают ВЕСЬ транскрипт (до 270k+), поэтому модель для них — только
+    # с окном 1M. 23.09 сюда попала Luna 6 (272k): сжатие падало, чат доктора трижды упёрся в ошибку.
+    compact = prof.get("compact", prof["cheap"])
     if isinstance(d.get("compaction"), dict) and "model" in d["compaction"]:
-        d["compaction"]["model"] = prof["cheap"]
+        d["compaction"]["model"] = compact
     if isinstance(d.get("compaction", {}).get("memoryFlush"), dict) and "model" in d["compaction"]["memoryFlush"]:
-        d["compaction"]["memoryFlush"]["model"] = prof["cheap"]
+        d["compaction"]["memoryFlush"]["model"] = compact
     am = cfg.get("plugins", {}).get("entries", {}).get("active-memory", {}).get("config", {})
     if "model" in am:
         am["model"] = prof["cheap"]
