@@ -1,0 +1,12 @@
+[Unit]
+Description=Живая полоска прогресса фоновых задач Йоды в Telegram (без модели)
+After=openclaw-gateway.service
+
+[Service]
+ExecStart=/usr/local/bin/yoda-progress --watch
+Restart=always
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=default.target

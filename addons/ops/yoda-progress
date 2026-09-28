@@ -1,0 +1,232 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""Прогресс фоновых задач Йоды — без модели, прямо из базы OpenClaw.
+
+    yoda-progress            текст: что идёт, сколько времени, полоска по шагам, что сейчас делает
+    yoda-progress --watch    живая полоска в Telegram: одно сообщение, правится на месте каждые 20 с;
+                             когда всё закончилось — правится в «✅ готово» и больше не трогается
+
+Зачем. 26–28.09 доктор отдавал задачу и не понимал, что происходит: Йода молчала по 10–30 минут,
+а его сообщения висели на входе. Теперь длинная работа уходит в фон (субагенты), а видно её здесь.
+
+Данные: sessions субагентов (agent:main:dashboard:*) — label, статус, время старта; их progress_card
+(план шагов) и последний вызов инструмента в транскрипте — «что делает сейчас».
+"""
+import datetime as dt
+import json
+import os
+import re
+import sqlite3
+import sys
+import time
+import urllib.parse
+import urllib.request
+
+DB = "file:/home/openclaw/.openclaw/agents/main/agent/openclaw-agent.sqlite?mode=ro"
+CFG = "/home/openclaw/.openclaw/openclaw.json"
+STATE = os.environ.get("YODA_PROGRESS_STATE", "/home/openclaw/.openclaw/workspace/.progress_msg.json")
+OWNER = 266082719
+MAIN = os.environ.get("YODA_PROGRESS_PARENT", "agent:main:telegram:default:direct:266082719")
+DONE = {"done", "failed", "killed", "timeout", "cancelled", "canceled", "aborted", "error", "succeeded", "completed"}
+MIN_SHOW_SEC = 45           # короткие задачи полоской не показываем
+FRESH_H = 4                 # «зависшие» записи старше 4 ч не считаем живыми
+
+TOOL_RU = {
+    "browser": "смотрит сайт", "web_search": "ищет в интернете", "research__search_and_read": "читает источники",
+    "read_url": "читает страницу", "exec": "выполняет команду", "process": "ждёт процесс", "read": "читает файл",
+    "files__read_text_file": "читает файл", "write": "пишет файл", "edit": "правит файл", "view_image": "смотрит картинку",
+    "sessions_spawn": "запускает помощника", "image_generate": "рисует картинку", "progress_card": "обновляет план",
+    "memory_search": "вспоминает", "studio__get_post": "смотрит пост в студии", "scitools__search": "ищет в научных базах",
+}
+
+
+def db():
+    return sqlite3.connect(DB, uri=True, timeout=5)
+
+
+def fmt_dur(sec):
+    sec = int(sec)
+    if sec < 60:
+        return f"{sec} с"
+    m = sec // 60
+    return f"{m} мин" if m < 60 else f"{m // 60} ч {m % 60:02d} мин"
+
+
+def bar(done, total, width=10):
+    if not total:
+        return ""
+    k = round(width * done / total)
+    return "▓" * k + "░" * (width - k) + f" {done}/{total}"
+
+
+def last_action(c, sid):
+    """Что субагент делает сейчас: последний вызов инструмента с коротким аргументом.
+    6+ обновлений карточки подряд без другой работы — зацикливание (28.09 было 27 раз подряд)."""
+    names = []
+    for (ej,) in c.execute("select event_json from transcript_events where session_id=? order by seq desc limit 60", (sid,)):
+        try:
+            ev = json.loads(ej)
+        except Exception:
+            continue
+        m = ev.get("message") if isinstance(ev.get("message"), dict) else ev
+        for x in (m.get("content") if isinstance(m.get("content"), list) else []):
+            if isinstance(x, dict) and x.get("type") in ("toolCall", "tool_use", "toolUse"):
+                names.append(x.get("name") or x.get("toolName") or "?")
+    streak = 0
+    for n in names:
+        if n != "progress_card":
+            break
+        streak += 1
+    if streak >= 6:
+        return f"⚠️ похоже, зациклился: {streak} обновлений плана подряд без работы"
+    for (ej,) in c.execute("select event_json from transcript_events where session_id=? order by seq desc limit 40", (sid,)):
+        try:
+            ev = json.loads(ej)
+        except Exception:
+            continue
+        m = ev.get("message") if isinstance(ev.get("message"), dict) else ev
+        ct = m.get("content")
+        if not isinstance(ct, list):
+            continue
+        for x in reversed(ct):
+            if isinstance(x, dict) and x.get("type") in ("toolCall", "tool_use", "toolUse"):
+                name = x.get("name") or x.get("toolName") or "?"
+                args = x.get("arguments") or x.get("input") or {}
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        args = {}
+                hint = ""
+                for k in ("query", "q", "url", "path", "command", "cmd"):
+                    if isinstance(args, dict) and args.get(k):
+                        hint = str(args[k])
+                        break
+                hint = re.sub(r"https?://(www\.)?", "", hint).split("?")[0][:48]
+                what = TOOL_RU.get(name, name.replace("__", ": "))
+                return f"{what}{': ' + hint if hint else ''}"
+    return ""
+
+
+def collect():
+    c = db()
+    now = time.time()
+    fresh = (now - FRESH_H * 3600) * 1000
+    tasks, recent = [], []
+    rows = c.execute("""select session_key, status, created_at, updated_at, entry_json from session_nodes
+                        where session_key like 'agent:main:dashboard:%' and updated_at > ?
+                        order by created_at""", (fresh,)).fetchall()
+    for key, st, created, upd, ej in rows:
+        e = json.loads(ej or "{}")
+        if e.get("spawnedBy") and e.get("spawnedBy") != MAIN:
+            continue
+        label = (e.get("label") or "задача").strip()
+        card = c.execute("select markdown, steps_json from session_progress_cards where session_key=?", (key,)).fetchone()
+        steps = json.loads(card[1] or "[]") if card else []
+        note = (card[0] or "").strip().splitlines()[0][:90] if card and card[0] else ""
+        done_n = sum(1 for s in steps if s.get("status") == "completed")
+        cur = next((s.get("step") for s in steps if s.get("status") == "in_progress"), "")
+        item = {"label": label, "age": now - created / 1000, "steps": len(steps), "done": done_n,
+                "current": cur, "note": note, "status": st, "ended": upd / 1000}
+        if (st or "").lower() in DONE:
+            if now - upd / 1000 < 1800:
+                recent.append(item)
+        else:
+            item["doing"] = last_action(c, e.get("sessionId", "")) if e.get("sessionId") else ""
+            tasks.append(item)
+    main = c.execute("select status, updated_at from session_nodes where session_key=?", (MAIN,)).fetchone()
+    main_busy = bool(main and (main[0] or "").lower() not in DONE)
+    return tasks, recent, main_busy
+
+
+def render(tasks, recent, main_busy, final=False):
+    lines = []
+    if tasks:
+        lines.append(f"⏳ В работе: {len(tasks)}")
+        for i, t in enumerate(tasks, 1):
+            lines.append(f"{i}. {t['label']} — {fmt_dur(t['age'])}")
+            if t["steps"]:
+                lines.append("   " + bar(t["done"], t["steps"]) + (f" · {t['current']}" if t["current"] else ""))
+            if t.get("doing"):
+                lines.append(f"   сейчас: {t['doing']}")
+            elif t["note"]:
+                lines.append(f"   {t['note']}")
+    if main_busy and not final:
+        lines.append("💬 Йода сейчас отвечает в чате")
+    if recent:
+        ok = [r for r in recent if (r["status"] or "").lower() in ("done", "succeeded", "completed")]
+        bad = [r for r in recent if r not in ok]
+        if ok:
+            lines.append("✅ Готово: " + "; ".join(r["label"] for r in ok[-5:]))
+        if bad:
+            lines.append("⚠️ Не доделано: " + "; ".join(f"{r['label']} ({r['status']})" for r in bad[-5:]))
+    if not lines:
+        lines.append("Сейчас фоновых задач нет.")
+    return "\n".join(lines)
+
+
+def tg(method, **data):
+    token = re.search(r'"botToken"\s*:\s*"([0-9]+:[A-Za-z0-9_-]+)"', open(CFG, encoding="utf-8").read()).group(1)
+    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/{method}",
+                                 data=urllib.parse.urlencode(data).encode())
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.load(r)
+
+
+def load_state():
+    try:
+        return json.load(open(STATE, encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_state(s):
+    tmp = STATE + ".tmp"
+    json.dump(s, open(tmp, "w", encoding="utf-8"), ensure_ascii=False)
+    os.replace(tmp, STATE)
+
+
+def watch_once():
+    tasks, recent, main_busy = collect()
+    st = load_state()
+    long_running = [t for t in tasks if t["age"] >= MIN_SHOW_SEC]
+    if long_running:
+        text = render(tasks, [], False)
+        if not st.get("message_id"):
+            r = tg("sendMessage", chat_id=OWNER, text=text, disable_notification="true")
+            st = {"message_id": r["result"]["message_id"], "text": text, "labels": [t["label"] for t in tasks],
+                  "started": time.time()}
+        elif text != st.get("text"):
+            try:
+                tg("editMessageText", chat_id=OWNER, message_id=st["message_id"], text=text)
+            except Exception:
+                pass                                   # сообщение удалено или «не изменилось» — не страшно
+            st["text"] = text
+            st["labels"] = sorted(set(st.get("labels", [])) | {t["label"] for t in tasks})
+        save_state(st)
+    elif st.get("message_id"):
+        labels = st.get("labels") or []
+        mine = [r for r in recent if r["label"] in labels] or recent
+        final = render([], mine, False, final=True)
+        final += f"\n⏱ заняло {fmt_dur(time.time() - st.get('started', time.time()))}"
+        try:
+            tg("editMessageText", chat_id=OWNER, message_id=st["message_id"], text=final)
+        except Exception:
+            pass
+        save_state({})
+
+
+def main():
+    if "--watch" in sys.argv:
+        while True:
+            try:
+                watch_once()
+            except Exception as e:
+                print(f"{dt.datetime.now():%H:%M:%S} ошибка: {e}", file=sys.stderr, flush=True)
+            time.sleep(20)
+    tasks, recent, main_busy = collect()
+    print(render(tasks, recent, main_busy))
+
+
+if __name__ == "__main__":
+    main()
