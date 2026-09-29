@@ -16,6 +16,7 @@
 | telegram | обёртка над tg-gateway (см. addons/tg-gateway) | — |
 | whatsapp | отправка через канал OpenClaw + правила подотчётности | плагин whatsapp |
 | events | пример интеграции внешнего афиша-скрипта через sudo-хелпер | — |
+| hyperresearch | глубокое исследование в фоне ([jordan-gibbs/hyperresearch](https://github.com/jordan-gibbs/hyperresearch), MIT) поверх Codex CLI: `hr.sh start "<вопрос>" [--light\|--full]`, прогресс в живой полоске `yoda-progress`, отчёт на русском уходит владельцу docx через tome | Codex CLI, `~/hr-venv` с hyperresearch из GitHub (в PyPI 0.12.0 нет цели codex), pandoc |
 
 После копирования пройдитесь по файлам: `123456789` → ваш Telegram ID,
 `you@example.com` → ваш email, пути venv — под ваши.

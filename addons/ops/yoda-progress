@@ -25,8 +25,8 @@ import urllib.request
 DB = "file:/home/openclaw/.openclaw/agents/main/agent/openclaw-agent.sqlite?mode=ro"
 CFG = "/home/openclaw/.openclaw/openclaw.json"
 STATE = os.environ.get("YODA_PROGRESS_STATE", "/home/openclaw/.openclaw/workspace/.progress_msg.json")
-OWNER = 266082719
-MAIN = os.environ.get("YODA_PROGRESS_PARENT", "agent:main:telegram:default:direct:266082719")
+OWNER = 123456789
+MAIN = os.environ.get("YODA_PROGRESS_PARENT", "agent:main:telegram:default:direct:123456789")
 DONE = {"done", "failed", "killed", "timeout", "cancelled", "canceled", "aborted", "error", "succeeded", "completed"}
 MIN_SHOW_SEC = 45           # короткие задачи полоской не показываем
 FRESH_H = 4                 # «зависшие» записи старше 4 ч не считаем живыми
@@ -134,6 +134,47 @@ def collect():
         else:
             item["doing"] = last_action(c, e.get("sessionId", "")) if e.get("sessionId") else ""
             tasks.append(item)
+    # Глубокие исследования hyperresearch (идут через Codex, а не субагентами): шаги — из run.json прогона
+    import glob
+    HR_STEPS = {"1": "разбор вопроса", "1.5": "план глав", "2": "широкий поиск", "3": "противоречия",
+                "4": "ключевые узлы", "5": "углублённый поиск", "6": "сверка узлов", "7": "споры источников",
+                "8": "критика подборки", "9": "выжимка доказательств", "10": "черновики отчёта",
+                "11": "сведение", "12": "критики", "13": "добор пробелов", "14": "правка",
+                "14.5": "проверка цитат", "15": "шлифовка", "16": "проверка читаемости"}
+    R = "/home/openclaw/projects/research"
+    for jp in sorted(glob.glob(f"{R}/.jobs/*.json")):
+        try:
+            j = json.load(open(jp, encoding="utf-8"))
+        except Exception:
+            continue
+        label = "Глубокое исследование: " + j.get("question", "")[:60]
+        if j.get("status") == "running":
+            done_n, total, cur = 0, 0, ""
+            runs = [r for r in glob.glob(f"{R}/research/runs/*/run.json") if os.path.getmtime(r) >= j["started"] - 60]
+            if runs:
+                try:
+                    m = json.load(open(max(runs, key=os.path.getmtime), encoding="utf-8"))
+                    steps = m.get("steps") or {}
+                    # план прогона: profile_steps (light = 1, 2, 10, 15, 16); старые манифесты — по tier
+                    plan = [str(s) for s in (m.get("profile_steps") or [])]
+                    tier = str(m.get("profile") or m.get("tier") or "").lower()
+                    total = len(plan) or (5 if tier == "light" else 16)
+                    done_n = sum(1 for k, v in steps.items() if (not plan or k in plan)
+                                 and str(v.get("status")) in ("completed", "done", "skipped"))
+                    total = max(total, done_n)
+                    live = [k for k, v in steps.items() if str(v.get("status")) in ("running", "in_progress", "started")]
+                    if live:
+                        k = live[-1]
+                        cur = HR_STEPS.get(k, f"шаг {k}")
+                        if k in plan:
+                            cur = f"шаг {plan.index(k) + 1}: {cur}"
+                except Exception:
+                    pass
+            tasks.append({"label": label, "age": now - j["started"], "steps": total, "done": done_n,
+                          "current": cur, "note": "", "status": "running", "doing": ""})
+        elif j.get("finished") and now - j["finished"] < 1800:
+            recent.append({"label": label, "status": "done" if j.get("status") == "done" else j.get("status", "failed"),
+                           "age": 0, "steps": 0, "done": 0, "current": "", "note": "", "ended": j["finished"]})
     main = c.execute("select status, updated_at from session_nodes where session_key=?", (MAIN,)).fetchone()
     main_busy = bool(main and (main[0] or "").lower() not in DONE)
     return tasks, recent, main_busy
@@ -151,8 +192,6 @@ def render(tasks, recent, main_busy, final=False):
                 lines.append(f"   сейчас: {t['doing']}")
             elif t["note"]:
                 lines.append(f"   {t['note']}")
-    if main_busy and not final:
-        lines.append("💬 Йода сейчас отвечает в чате")
     if recent:
         ok = [r for r in recent if (r["status"] or "").lower() in ("done", "succeeded", "completed")]
         bad = [r for r in recent if r not in ok]
