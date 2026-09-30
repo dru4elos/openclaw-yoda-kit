@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """yoda-models gpt6|excash|excash-flash|deepseek [--no-restart] — переключить модели ОБЕИХ Йод (openclaw, yoda2) и пины кронов.
-gpt6:         основная GPT-6 Sol, тяжёлое — Astra, рутина — Luna 6 (решение доктора 23.09).
+gpt6:         основная GPT-6.1 Sol (с 01.10; резерв — Sol 6), тяжёлое — Astra, рутина — Luna 6 (решение доктора 23.09).
 excash:       основная GPT-6 Astra (272k), резервы Astra 1M → Luna 1M → DeepSeek V4.1 Flash (RouterAI) → Gemini.
 excash-flash: основная Gemini 3.8 Flash, резервы Luna 1M → DeepSeek V4.1 Flash (RouterAI) → Gemini 3.7.
               Astra из цепочки убрана: с 16.09 отвечает 500. Дозор напишет, когда оживёт.
@@ -22,11 +22,14 @@ PROFILES = {
     # 23.09 решение доктора — роли по GPT-6: Sol делает основную работу, Astra — тяжёлые расчёты
     # (подключается сама как резерв и по команде /astra), Luna — рутина: пульс, сжатие памяти,
     # вечерний дайджест. Luna 6 отвечает за 1–2 с, Sol за 2–3 с, Astra за 8–11 с (замер 23.09).
-    "gpt6": {"primary": "excash/gpt-6-sol",
-             "fallbacks": ["excash/gpt-6-sol-1m", "excash/gpt-6-astra", "excash/gpt-6-luna-1m", DS,
+    # 01.10 доктор: основная — GPT-6.1 Sol. Первым резервом стоит проверенный Sol 6 (то же окно 272k):
+    # если 6.1 на excash сбоит, ход доигрывается на нём, а не на другой модели.
+    "gpt6": {"primary": "excash/gpt-6.1-sol",
+             "fallbacks": ["excash/gpt-6-sol", "excash/gpt-6.1-sol-1m", "excash/gpt-6-astra", "excash/gpt-6-luna-1m", DS,
                            "excash/gemini-3.8-flash"],
-             "cheap": "excash/gpt-6-luna", "compact": "excash/gpt-6-luna-1m", "brief": "excash/gpt-6-sol-1m", "heartbeat": "excash/gpt-6-luna",
-             "subagents": {"primary": "excash/gpt-6-sol", "fallbacks": ["excash/gpt-6-luna-1m", DS]},
+             "cheap": "excash/gpt-6-luna", "compact": "excash/gpt-6-luna-1m", "brief": "excash/gpt-6.1-sol-1m", "heartbeat": "excash/gpt-6-luna",
+             "subagents": {"primary": "excash/gpt-6.1-sol", "fallbacks": ["excash/gpt-6-sol", "excash/gpt-6-luna-1m", DS]},
+             "aliases": {"sol": "excash/gpt-6.1-sol", "sol6": "excash/gpt-6-sol"},
              "think": "adaptive"},
     "excash": {"primary": "excash/gpt-6-astra",
                # 16.09: sol-1m отвечал ошибкой 36 из 36 раз; gemini-3.8-flash на «перегружен» (529) обрывает ход,
@@ -60,6 +63,12 @@ PROFILES = {
                  "subagents": DS, "subthink": "off", "think": "off"},
 }
 
+# Новые модели excash, которых ещё нет в каталоге провайдера в openclaw.json: запись клонируется
+# с ближайшей родственницы (окно, maxTokens, картинки), меняются только id и имя.
+# Без записи в каталоге OpenClaw не знает окна модели и не сжимает историю вовремя.
+CLONE = {"gpt-6.1-sol": ("gpt-6-sol", "GPT-6.1 Sol (excash)"),
+         "gpt-6.1-sol-1m": ("gpt-6-sol-1m", "GPT-6.1 Sol 1M (excash)")}
+
 CRON_PINS = {"openclaw": {"Утренний брифинг": "brief", "Вечерний дайджест": "cheap"}}   # по началу имени крона
 
 
@@ -82,6 +91,19 @@ def patch(user, prof):
                   " (подключить: sudo yoda-key routerai)")
             return False
         return True
+
+    cat = cfg.get("models", {}).get("providers", {}).get("excash", {}).get("models", [])
+    have = {m.get("id") for m in cat}
+    refs = [prof["primary"], *prof["fallbacks"], prof["brief"],
+            *([prof["subagents"]["primary"]] if isinstance(prof.get("subagents"), dict) else [])]
+    for ref in refs:
+        mid = ref.split("/", 1)[1] if ref.startswith("excash/") else None
+        if mid and mid not in have and mid in CLONE:
+            src = next((m for m in cat if m.get("id") == CLONE[mid][0]), None)
+            if src:
+                cat.append(dict(src, id=mid, name=CLONE[mid][1]))
+                have.add(mid)
+                print(f"  {user}: в каталог excash добавлена {mid} (по образцу {CLONE[mid][0]})")
 
     d = cfg["agents"]["defaults"]
     chain = [m for m in ([prof["primary"]] + prof["fallbacks"]) if live(m)]
@@ -112,6 +134,15 @@ def patch(user, prof):
     am = cfg.get("plugins", {}).get("entries", {}).get("active-memory", {}).get("config", {})
     if "model" in am:
         am["model"] = prof["cheap"]
+    # команды чата (/sol и т.п.): псевдоним переезжает на новую модель, старая получает свой
+    al = d.setdefault("models", {})
+    for name, ref in prof.get("aliases", {}).items():
+        if not live(ref):
+            continue
+        for r, v in al.items():
+            if v.get("alias") == name and r != ref:
+                v.pop("alias")
+        al.setdefault(ref, {})["alias"] = name
     for k in ("cheap", "brief", "heartbeat"):
         if not live(prof[k]):
             prof = dict(prof, **{k: "excash/gemini-3.8-flash"})
