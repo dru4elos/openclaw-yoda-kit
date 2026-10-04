@@ -147,15 +147,16 @@ def _rich_text(m) -> str:
 
 
 @app.get("/read")
-async def read(chat: str, limit: int = 50, media: int = 0):
-    """Прочитать последние сообщения канала/чата — для радаров тем и хуков."""
+async def read(chat: str, limit: int = 50, media: int = 0, before_id: int = 0):
+    """Прочитать последние сообщения канала/чата — для радаров тем и хуков.
+    before_id — читать ленту старше этого сообщения (старые пересланные посты дальше 300 последних)."""
     cl = await client()
     try:
         ent = await cl.get_entity(chat if not chat.lstrip("-").isdigit() else int(chat))
     except Exception as exc:
         raise HTTPException(404, f"чат не найден: {str(exc)[:120]}")
     out = []
-    async for m in cl.iter_messages(ent, limit=min(int(limit), 300)):
+    async for m in cl.iter_messages(ent, limit=min(int(limit), 300), offset_id=int(before_id or 0)):
         row = {
             "id": m.id,
             "date": m.date.isoformat() if m.date else None,
@@ -416,7 +417,7 @@ async def search(query: str, chat: str = "", limit: int = 20):
             "chat": _who(ent) if ent else _who(await m.get_chat()),
             "sender": "Я" if getattr(m, "out", False) else (
                 _who(await m.get_sender()) if getattr(m, "sender_id", None) else ""),
-            "text": (m.message or "")[:1000],
+            "text": (m.message or _rich_text(m) or "")[:1000],   # у rich-сообщений message пустой
         })
     return {"ok": True, "count": len(out), "messages": out}
 

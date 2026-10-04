@@ -1,0 +1,447 @@
+{
+ "nota": "Каталог ситуаций. frasi — стартовый набор («io» — говорю я, «loro» — слышу от собеседника). Найденное на занятиях дописывается в data/trovate.json, выученное — в data/cards.json.",
+ "situazioni": [
+  {
+   "id": "presentarsi", "it": "Presentarsi", "ru": "Знакомство и короткий разговор", "livello": "A1",
+   "contesto": "Ты знакомишься с итальянцем: в гостинице, на конференции, в поезде. Кто ты, откуда, чем занимаешься, и как попросить говорить медленнее.",
+   "ruoli": {"tu": "ты", "yoda": "итальянец, с которым знакомишься"},
+   "registro": "С незнакомыми взрослыми — Lei (вы): «Di dov'è?». С ровесниками в неформальной обстановке быстро переходят на tu.",
+   "sottotipi": [
+    {"id": "chi_sono", "ru": "Кто я и откуда"},
+    {"id": "lavoro", "ru": "Работа"},
+    {"id": "non_capisco", "ru": "Не понял — переспросить, попросить помедленнее"}
+   ],
+   "grammatica": ["essere: sono, sei, è", "Lei (вы) и tu (ты): Di dov'è? / Di dove sei?", "come si dice…?"],
+   "cultura": ["Андрей по-итальянски — Andrea, это мужское имя.", "При знакомстве говорят «Piacere» и жмут руку; друзьям — два поцелуя в щёки."],
+   "frasi": [
+    {"it": "Piacere, sono Andrea.", "ru": "Очень приятно, я Андрей.", "chi": "io", "sub": "chi_sono"},
+    {"it": "Sono russo, di Mosca.", "ru": "Я русский, из Москвы.", "chi": "io", "sub": "chi_sono"},
+    {"it": "Di dov'è?", "ru": "Откуда вы?", "chi": "loro", "sub": "chi_sono"},
+    {"it": "Che lavoro fa?", "ru": "Кем вы работаете?", "chi": "loro", "sub": "lavoro"},
+    {"it": "Faccio il medico: sono ortopedico pediatrico.", "ru": "Я врач, детский ортопед.", "chi": "io", "sub": "lavoro"},
+    {"it": "Parlo un po' d'italiano, sto imparando.", "ru": "Я немного говорю по-итальянски, учу.", "chi": "io", "sub": "non_capisco"},
+    {"it": "Può parlare più lentamente, per favore?", "ru": "Можете говорить помедленнее?", "chi": "io", "sub": "non_capisco"},
+    {"it": "Scusi, non ho capito. Può ripetere?", "ru": "Простите, я не понял. Можете повторить?", "chi": "io", "sub": "non_capisco"},
+    {"it": "Come si dice «ключ» in italiano?", "ru": "Как сказать «ключ» по-итальянски?", "chi": "io", "sub": "non_capisco"}
+   ]
+  },
+  {
+   "id": "bar", "it": "Al bar", "ru": "В баре: кофе и завтрак", "livello": "A1",
+   "contesto": "Утро, обычный итальянский бар. Ты заказываешь кофе и выпечку у стойки, расплачиваешься.",
+   "ruoli": {"tu": "клиент", "yoda": "бариста"},
+   "registro": "С баристой — Lei; бариста часто сам говорит на tu, это нормально.",
+   "sottotipi": [
+    {"id": "ordinare", "ru": "Заказ у стойки"},
+    {"id": "tipi_caffe", "ru": "Какой бывает кофе"},
+    {"id": "pagare", "ru": "Оплата и чек"}
+   ],
+   "grammatica": ["Артикли: un caffè, uno spritz, una brioche, un'aranciata", "Вежливая просьба: Vorrei… / Mi fa…?"],
+   "cultura": ["caffè — это эспрессо.", "Капучино пьют утром, после обеда его заказывают редко.", "У стойки (al banco) дешевле, чем за столиком (al tavolo).", "В больших городах сначала платят на кассе, а с чеком (scontrino) идут к стойке."],
+   "frasi": [
+    {"it": "Buongiorno! Un caffè, per favore.", "ru": "Здравствуйте! Эспрессо, пожалуйста.", "chi": "io", "sub": "ordinare"},
+    {"it": "Vorrei un cappuccino e un cornetto.", "ru": "Мне капучино и круассан.", "chi": "io", "sub": "ordinare"},
+    {"it": "Mi fa un caffè macchiato?", "ru": "Сделаете мне макиато?", "chi": "io", "sub": "tipi_caffe"},
+    {"it": "Al banco o al tavolo?", "ru": "У стойки или за столиком?", "chi": "loro", "sub": "ordinare"},
+    {"it": "Altro?", "ru": "Что-нибудь ещё?", "chi": "loro", "sub": "ordinare"},
+    {"it": "Basta così, grazie.", "ru": "Больше ничего, спасибо.", "chi": "io", "sub": "ordinare"},
+    {"it": "Quant'è?", "ru": "Сколько с меня?", "chi": "io", "sub": "pagare"},
+    {"it": "Prima deve fare lo scontrino alla cassa.", "ru": "Сначала нужно пробить чек на кассе.", "chi": "loro", "sub": "pagare"},
+    {"it": "Posso pagare con la carta?", "ru": "Можно картой?", "chi": "io", "sub": "pagare"},
+    {"it": "Un bicchiere d'acqua, per favore.", "ru": "Стакан воды, пожалуйста.", "chi": "io", "sub": "ordinare"}
+   ]
+  },
+  {
+   "id": "alimentari", "it": "Al mercato e in salumeria", "ru": "Продукты: рынок и гастроном", "livello": "A1",
+   "contesto": "Ты покупаешь ветчину, сыр и овощи на рынке или в гастрономе (salumeria): количество, цена, нарезка.",
+   "ruoli": {"tu": "покупатель", "yoda": "продавец"},
+   "registro": "Lei.",
+   "sottotipi": [
+    {"id": "quantita", "ru": "Сколько: граммы и килограммы"},
+    {"id": "salumi", "ru": "Нарезка: ветчина и сыр"},
+    {"id": "frutta", "ru": "Овощи и фрукты"},
+    {"id": "pagare", "ru": "Цена и оплата"}
+   ],
+   "grammatica": ["Количества: un etto = 100 г, due etti, mezzo chilo, un chilo", "Частичный артикль: un po' di, del pane"],
+   "cultura": ["Ветчину и сыр считают в etti (по 100 г).", "На рынке фрукты часто нельзя трогать руками: выбирает продавец."],
+   "frasi": [
+    {"it": "Vorrei due etti di prosciutto crudo.", "ru": "Мне 200 граммов сыровяленой ветчины.", "chi": "io", "sub": "quantita"},
+    {"it": "Mezzo chilo di pomodori, per favore.", "ru": "Полкило помидоров, пожалуйста.", "chi": "io", "sub": "frutta"},
+    {"it": "Lo vuole affettato?", "ru": "Вам нарезать?", "chi": "loro", "sub": "salumi"},
+    {"it": "Sì, a fette sottili, grazie.", "ru": "Да, тонкими ломтиками, спасибо.", "chi": "io", "sub": "salumi"},
+    {"it": "Va bene così?", "ru": "Так подойдёт?", "chi": "loro", "sub": "quantita"},
+    {"it": "Quanto costa al chilo?", "ru": "Сколько стоит килограмм?", "chi": "io", "sub": "pagare"},
+    {"it": "Posso assaggiare?", "ru": "Можно попробовать?", "chi": "io", "sub": "salumi"},
+    {"it": "No, è tutto. Quanto le devo?", "ru": "Нет, это всё. Сколько я вам должен?", "chi": "io", "sub": "pagare"}
+   ]
+  },
+  {
+   "id": "ristorante", "it": "Al ristorante", "ru": "В ресторане", "livello": "A1",
+   "contesto": "Вечер, траттория. Столик, меню, заказ, аллергия, счёт.",
+   "ruoli": {"tu": "гость", "yoda": "официант"},
+   "registro": "Lei.",
+   "sottotipi": [
+    {"id": "tavolo", "ru": "Столик и бронь"},
+    {"id": "ordinare", "ru": "Заказ и советы официанта"},
+    {"id": "allergie", "ru": "Аллергии и ограничения"},
+    {"id": "conto", "ru": "Счёт"}
+   ],
+   "grammatica": ["Avere: abbiamo prenotato (passato prossimo)", "Per me… / per la signora…", "essere allergico a…"],
+   "cultura": ["Coperto — плата за хлеб и сервировку, она законна и стоит в меню.", "Чаевые не обязательны, обычно округляют.", "Ужинают с 20:00, раньше многие кухни закрыты."],
+   "frasi": [
+    {"it": "Un tavolo per due, per favore.", "ru": "Столик на двоих, пожалуйста.", "chi": "io", "sub": "tavolo"},
+    {"it": "Avete prenotato?", "ru": "Вы бронировали?", "chi": "loro", "sub": "tavolo"},
+    {"it": "Sì, abbiamo prenotato a nome Ivanov.", "ru": "Да, мы бронировали на фамилию Иванов.", "chi": "io", "sub": "tavolo"},
+    {"it": "Cosa ci consiglia?", "ru": "Что вы нам посоветуете?", "chi": "io", "sub": "ordinare"},
+    {"it": "Per me la carbonara, e per la signora il risotto.", "ru": "Мне карбонару, а даме ризотто.", "chi": "io", "sub": "ordinare"},
+    {"it": "Sono allergico alla frutta a guscio.", "ru": "У меня аллергия на орехи.", "chi": "io", "sub": "allergie"},
+    {"it": "Da bere?", "ru": "Что будете пить?", "chi": "loro", "sub": "ordinare"},
+    {"it": "Una bottiglia d'acqua naturale, per favore.", "ru": "Бутылку негазированной воды, пожалуйста.", "chi": "io", "sub": "ordinare"},
+    {"it": "Il conto, per favore.", "ru": "Счёт, пожалуйста.", "chi": "io", "sub": "conto"}
+   ]
+  },
+  {
+   "id": "indicazioni", "it": "Chiedere indicazioni", "ru": "Как пройти: спросить дорогу", "livello": "A1",
+   "contesto": "Ты в незнакомом городе, ищешь вокзал, собор, аптеку.",
+   "ruoli": {"tu": "турист", "yoda": "прохожий"},
+   "registro": "Lei с прохожими: «Scusi…».",
+   "sottotipi": [
+    {"id": "chiedere", "ru": "Спросить, где"},
+    {"id": "capire", "ru": "Понять ответ: прямо, направо, налево"},
+    {"id": "distanza", "ru": "Далеко ли, пешком или транспортом"}
+   ],
+   "grammatica": ["c'è / ci sono", "Повелительное на Lei: vada, giri, prenda", "a destra, a sinistra, sempre dritto"],
+   "cultura": ["Начинай с «Scusi» — так обращаются к незнакомому."],
+   "frasi": [
+    {"it": "Scusi, dov'è la stazione?", "ru": "Простите, где вокзал?", "chi": "io", "sub": "chiedere"},
+    {"it": "Come arrivo al Duomo?", "ru": "Как мне дойти до собора?", "chi": "io", "sub": "chiedere"},
+    {"it": "C'è una farmacia qui vicino?", "ru": "Здесь рядом есть аптека?", "chi": "io", "sub": "chiedere"},
+    {"it": "Vada sempre dritto e poi giri a destra.", "ru": "Идите прямо, потом поверните направо.", "chi": "loro", "sub": "capire"},
+    {"it": "Al semaforo giri a sinistra.", "ru": "На светофоре поверните налево.", "chi": "loro", "sub": "capire"},
+    {"it": "È lontano da qui?", "ru": "Это далеко отсюда?", "chi": "io", "sub": "distanza"},
+    {"it": "È a cinque minuti a piedi.", "ru": "Пять минут пешком.", "chi": "loro", "sub": "distanza"},
+    {"it": "Me lo può indicare sulla mappa?", "ru": "Можете показать на карте?", "chi": "io", "sub": "chiedere"}
+   ]
+  },
+  {
+   "id": "stazione", "it": "In stazione e in treno", "ru": "Вокзал и поезд", "livello": "A1",
+   "contesto": "Ты покупаешь билет, ищешь платформу, узнаёшь о задержке, садишься в поезд.",
+   "ruoli": {"tu": "пассажир", "yoda": "кассир / контролёр / сосед"},
+   "registro": "Lei.",
+   "sottotipi": [
+    {"id": "biglietto", "ru": "Купить билет"},
+    {"id": "binario", "ru": "Платформа и расписание"},
+    {"id": "ritardo", "ru": "Задержка и пересадка"},
+    {"id": "a_bordo", "ru": "В поезде"}
+   ],
+   "grammatica": ["Предлоги: per Firenze, da quale binario, a Napoli", "Время: a che ora…? alle 10 e mezza"],
+   "cultura": ["Бумажный билет на региональный поезд нужно прокомпостировать (convalidare) до посадки, иначе штраф.", "На Frecciarossa места указаны в билете."],
+   "frasi": [
+    {"it": "Un biglietto per Firenze, per favore.", "ru": "Один билет до Флоренции, пожалуйста.", "chi": "io", "sub": "biglietto"},
+    {"it": "Solo andata o andata e ritorno?", "ru": "В одну сторону или туда и обратно?", "chi": "loro", "sub": "biglietto"},
+    {"it": "Andata e ritorno, seconda classe.", "ru": "Туда и обратно, второй класс.", "chi": "io", "sub": "biglietto"},
+    {"it": "Da quale binario parte il treno per Roma?", "ru": "С какой платформы отходит поезд на Рим?", "chi": "io", "sub": "binario"},
+    {"it": "Il treno è in ritardo di venti minuti.", "ru": "Поезд опаздывает на двадцать минут.", "chi": "loro", "sub": "ritardo"},
+    {"it": "Devo convalidare il biglietto?", "ru": "Нужно компостировать билет?", "chi": "io", "sub": "biglietto"},
+    {"it": "Scusi, questo posto è libero?", "ru": "Простите, это место свободно?", "chi": "io", "sub": "a_bordo"},
+    {"it": "A che ora arriva a Napoli?", "ru": "Во сколько он прибывает в Неаполь?", "chi": "io", "sub": "binario"}
+   ]
+  },
+  {
+   "id": "albergo", "it": "In albergo", "ru": "Отель", "livello": "A1",
+   "contesto": "Заселение, вопросы о завтраке, что-то сломалось в номере, выезд.",
+   "ruoli": {"tu": "гость", "yoda": "администратор"},
+   "registro": "Lei.",
+   "sottotipi": [
+    {"id": "check_in", "ru": "Заселение"},
+    {"id": "servizi", "ru": "Завтрак, багаж, услуги"},
+    {"id": "problemi", "ru": "Проблема в номере"},
+    {"id": "check_out", "ru": "Выезд"}
+   ],
+   "grammatica": ["Posso + инфинитив: posso lasciare…", "non funziona / non funzionano"],
+   "cultura": ["При заселении попросят паспорт (documento) — это обязательная регистрация гостей.", "Туристический налог (tassa di soggiorno) часто платят отдельно наличными."],
+   "frasi": [
+    {"it": "Buonasera, ho una prenotazione a nome Ivanov.", "ru": "Добрый вечер, у меня бронь на фамилию Иванов.", "chi": "io", "sub": "check_in"},
+    {"it": "Mi serve un documento, per favore.", "ru": "Мне нужен ваш документ, пожалуйста.", "chi": "loro", "sub": "check_in"},
+    {"it": "A che ora è la colazione?", "ru": "Во сколько завтрак?", "chi": "io", "sub": "servizi"},
+    {"it": "Posso lasciare i bagagli qui?", "ru": "Можно оставить здесь багаж?", "chi": "io", "sub": "servizi"},
+    {"it": "L'aria condizionata non funziona.", "ru": "Кондиционер не работает.", "chi": "io", "sub": "problemi"},
+    {"it": "A che ora devo lasciare la camera?", "ru": "Во сколько нужно освободить номер?", "chi": "io", "sub": "check_out"},
+    {"it": "Vorrei fare il check-out.", "ru": "Я хотел бы выехать.", "chi": "io", "sub": "check_out"}
+   ]
+  },
+  {
+   "id": "farmacia", "it": "In farmacia", "ru": "Аптека", "livello": "A1",
+   "contesto": "Болит голова или горло, нужен пластырь. Аптекарь в Италии часто советует сам.",
+   "ruoli": {"tu": "покупатель", "yoda": "фармацевт"},
+   "registro": "Lei.",
+   "sottotipi": [
+    {"id": "sintomi", "ru": "Что беспокоит"},
+    {"id": "farmaco", "ru": "Препарат и рецепт"},
+    {"id": "posologia", "ru": "Как принимать"}
+   ],
+   "grammatica": ["avere mal di + часть тела: ho mal di testa, mal di gola", "avere bisogno di…", "Quante volte al giorno?"],
+   "cultura": ["Аптеку узнают по зелёному кресту.", "Ночью работает дежурная аптека (farmacia di turno), её адрес висит на дверях закрытых."],
+   "frasi": [
+    {"it": "Ho mal di testa. Cosa mi consiglia?", "ru": "У меня болит голова. Что посоветуете?", "chi": "io", "sub": "sintomi"},
+    {"it": "Ha qualcosa per il mal di gola?", "ru": "У вас есть что-нибудь от боли в горле?", "chi": "io", "sub": "sintomi"},
+    {"it": "Ha la ricetta?", "ru": "У вас есть рецепт?", "chi": "loro", "sub": "farmaco"},
+    {"it": "No. È un farmaco da banco?", "ru": "Нет. Это безрецептурный препарат?", "chi": "io", "sub": "farmaco"},
+    {"it": "Quante volte al giorno?", "ru": "Сколько раз в день?", "chi": "io", "sub": "posologia"},
+    {"it": "Due compresse al giorno, dopo i pasti.", "ru": "По две таблетки в день, после еды.", "chi": "loro", "sub": "posologia"},
+    {"it": "È adatto ai bambini?", "ru": "Подходит детям?", "chi": "io", "sub": "farmaco"},
+    {"it": "Ho bisogno di un cerotto e di un disinfettante.", "ru": "Мне нужен пластырь и антисептик.", "chi": "io", "sub": "farmaco"}
+   ]
+  },
+  {
+   "id": "negozio", "it": "In un negozio di vestiti", "ru": "Одежда и обувь", "livello": "A2",
+   "contesto": "Магазин одежды: размер, примерка, мало или велико, скидка.",
+   "ruoli": {"tu": "покупатель", "yoda": "продавец"},
+   "registro": "Lei.",
+   "sottotipi": [
+    {"id": "taglia", "ru": "Размер и цвет"},
+    {"id": "provare", "ru": "Примерка"},
+    {"id": "comprare", "ru": "Цена, скидка, обмен"}
+   ],
+   "grammatica": ["Местоимения lo / la: posso provarla? (la giacca)", "Согласование: la giacca mi sta stretta, il maglione mi sta largo"],
+   "cultura": ["Размер одежды — taglia, обуви — numero.", "Распродажи (saldi) — январь и июль."],
+   "frasi": [
+    {"it": "Sto solo guardando, grazie.", "ru": "Я просто смотрю, спасибо.", "chi": "io", "sub": "taglia"},
+    {"it": "Che taglia porta?", "ru": "Какой у вас размер?", "chi": "loro", "sub": "taglia"},
+    {"it": "Avete questa giacca in una taglia più grande?", "ru": "Есть эта куртка на размер больше?", "chi": "io", "sub": "taglia"},
+    {"it": "Posso provarla?", "ru": "Можно её примерить?", "chi": "io", "sub": "provare"},
+    {"it": "I camerini sono in fondo a destra.", "ru": "Примерочные в конце справа.", "chi": "loro", "sub": "provare"},
+    {"it": "Mi sta stretta.", "ru": "Мне тесно (она узкая).", "chi": "io", "sub": "provare"},
+    {"it": "C'è uno sconto?", "ru": "Есть скидка?", "chi": "io", "sub": "comprare"}
+   ]
+  },
+  {
+   "id": "trasporti", "it": "Autobus, metro e taxi", "ru": "Автобус, метро, такси", "livello": "A2",
+   "contesto": "Ты едешь по городу: где купить билет, где выходить, как вызвать такси.",
+   "ruoli": {"tu": "пассажир", "yoda": "продавец билетов / водитель / прохожий"},
+   "registro": "Lei.",
+   "sottotipi": [
+    {"id": "biglietto", "ru": "Где купить билет"},
+    {"id": "fermata", "ru": "Остановка и выход"},
+    {"id": "taxi", "ru": "Такси"}
+   ],
+   "grammatica": ["Dove posso + инфинитив?", "scendere / salire"],
+   "cultura": ["Билет на автобус обычно продают в табачной лавке (tabaccheria, вывеска «T») и в киоске (edicola).", "Билет валидируют в салоне."],
+   "frasi": [
+    {"it": "Dove posso comprare il biglietto dell'autobus?", "ru": "Где купить билет на автобус?", "chi": "io", "sub": "biglietto"},
+    {"it": "In tabaccheria o all'edicola.", "ru": "В табачной лавке или в киоске.", "chi": "loro", "sub": "biglietto"},
+    {"it": "Questo autobus va in centro?", "ru": "Этот автобус идёт в центр?", "chi": "io", "sub": "fermata"},
+    {"it": "A quale fermata devo scendere?", "ru": "На какой остановке мне выходить?", "chi": "io", "sub": "fermata"},
+    {"it": "Mi chiama un taxi, per favore?", "ru": "Вызовете мне такси, пожалуйста?", "chi": "io", "sub": "taxi"},
+    {"it": "Quanto costa fino all'aeroporto?", "ru": "Сколько стоит до аэропорта?", "chi": "io", "sub": "taxi"}
+   ]
+  },
+  {
+   "id": "telefono", "it": "Al telefono", "ru": "Звонок: бронь и запись", "livello": "A2",
+   "contesto": "Ты звонишь забронировать столик или записаться, плохо слышно, просишь перезвонить.",
+   "ruoli": {"tu": "звонящий", "yoda": "администратор"},
+   "registro": "Lei; по телефону отвечают «Pronto».",
+   "sottotipi": [
+    {"id": "prenotare", "ru": "Забронировать"},
+    {"id": "linea", "ru": "Плохо слышно, перезвонить"}
+   ],
+   "grammatica": ["Вежливое «вас» как дополнение: La sento male, La richiamo più tardi", "Время: alle otto, alle venti e trenta"],
+   "cultura": ["«Pronto» — так снимают трубку."],
+   "frasi": [
+    {"it": "Pronto, buongiorno. Vorrei prenotare un tavolo per stasera.", "ru": "Алло, здравствуйте. Я хотел бы забронировать столик на вечер.", "chi": "io", "sub": "prenotare"},
+    {"it": "Per quante persone?", "ru": "На сколько человек?", "chi": "loro", "sub": "prenotare"},
+    {"it": "Per quattro, alle otto.", "ru": "На четверых, на восемь.", "chi": "io", "sub": "prenotare"},
+    {"it": "A che nome?", "ru": "На чьё имя?", "chi": "loro", "sub": "prenotare"},
+    {"it": "Scusi, la sento male.", "ru": "Простите, вас плохо слышно.", "chi": "io", "sub": "linea"},
+    {"it": "Può richiamarmi più tardi?", "ru": "Можете перезвонить мне позже?", "chi": "io", "sub": "linea"}
+   ]
+  },
+  {
+   "id": "medico", "it": "Dal medico e al pronto soccorso", "ru": "У врача и в неотложке (как пациент)", "livello": "A2",
+   "contesto": "Ты или ребёнок заболел в поездке: рассказать, что болит и сколько, про аллергию; при случае — что ты сам врач.",
+   "ruoli": {"tu": "пациент или родитель", "yoda": "врач / медсестра"},
+   "registro": "Lei.",
+   "sottotipi": [
+    {"id": "dolore", "ru": "Что болит"},
+    {"id": "da_quando", "ru": "С какого времени"},
+    {"id": "bambino", "ru": "Ребёнок упал"},
+    {"id": "collega", "ru": "Я тоже врач"}
+   ],
+   "grammatica": ["mi fa male / mi fanno male", "da + время: ho la febbre da due giorni", "passato prossimo: è caduto, si è fatto male"],
+   "cultura": ["Скорая и экстренные службы — 112.", "В pronto soccorso пациентов сортируют по цветовому коду срочности."],
+   "frasi": [
+    {"it": "Mi fa male qui.", "ru": "У меня болит здесь.", "chi": "io", "sub": "dolore"},
+    {"it": "Ho la febbre da due giorni.", "ru": "У меня температура уже два дня.", "chi": "io", "sub": "da_quando"},
+    {"it": "Da quanto tempo?", "ru": "Как давно?", "chi": "loro", "sub": "da_quando"},
+    {"it": "Il bambino è caduto e si è fatto male al braccio.", "ru": "Ребёнок упал и ушиб руку.", "chi": "io", "sub": "bambino"},
+    {"it": "Facciamo una radiografia.", "ru": "Сделаем рентген.", "chi": "loro", "sub": "bambino"},
+    {"it": "Sono allergico alla penicillina.", "ru": "У меня аллергия на пенициллин.", "chi": "io", "sub": "dolore"},
+    {"it": "Sono medico anch'io, ortopedico.", "ru": "Я тоже врач, ортопед.", "chi": "io", "sub": "collega"}
+   ]
+  },
+  {
+   "id": "auto", "it": "Noleggio, benzinaio e parcheggio", "ru": "Аренда авто, заправка, парковка", "livello": "A2",
+   "contesto": "Ты берёшь машину напрокат, заправляешься и ищешь, где встать.",
+   "ruoli": {"tu": "водитель", "yoda": "сотрудник проката / заправщик / прохожий"},
+   "registro": "Lei.",
+   "sottotipi": [
+    {"id": "noleggio", "ru": "Прокат"},
+    {"id": "benzina", "ru": "Заправка"},
+    {"id": "parcheggio", "ru": "Парковка и ZTL"}
+   ],
+   "grammatica": ["è incluso / è inclusa", "Dove posso + инфинитив?"],
+   "cultura": ["ZTL — зона ограниченного движения в центре: въезд без разрешения = штраф, который приходит позже домой.", "Синяя разметка — платная парковка, белая — обычно бесплатная, жёлтая — для своих."],
+   "frasi": [
+    {"it": "Ho prenotato una macchina a nome Ivanov.", "ru": "Я бронировал машину на фамилию Иванов.", "chi": "io", "sub": "noleggio"},
+    {"it": "La patente, per favore.", "ru": "Ваши права, пожалуйста.", "chi": "loro", "sub": "noleggio"},
+    {"it": "L'assicurazione è inclusa?", "ru": "Страховка включена?", "chi": "io", "sub": "noleggio"},
+    {"it": "Il pieno, per favore.", "ru": "Полный бак, пожалуйста.", "chi": "io", "sub": "benzina"},
+    {"it": "Dove posso parcheggiare?", "ru": "Где можно припарковаться?", "chi": "io", "sub": "parcheggio"},
+    {"it": "Attenzione, qui c'è la ZTL.", "ru": "Осторожно, тут зона ограниченного движения.", "chi": "loro", "sub": "parcheggio"}
+   ]
+  },
+  {
+   "id": "spiaggia", "it": "In spiaggia", "ru": "Пляж", "livello": "A2",
+   "contesto": "Платный пляж (stabilimento balneare): зонтик, лежаки, душ, можно ли купаться.",
+   "ruoli": {"tu": "отдыхающий", "yoda": "служащий пляжа"},
+   "registro": "Lei.",
+   "sottotipi": [
+    {"id": "ombrellone", "ru": "Зонт и лежаки"},
+    {"id": "mare", "ru": "Море и безопасность"}
+   ],
+   "grammatica": ["Si può + инфинитив?", "Quanto costa…? per tutta la giornata"],
+   "cultura": ["Красный флаг — купаться запрещено."],
+   "frasi": [
+    {"it": "Quanto costa un ombrellone con due lettini?", "ru": "Сколько стоит зонт с двумя лежаками?", "chi": "io", "sub": "ombrellone"},
+    {"it": "Per tutta la giornata o mezza giornata?", "ru": "На весь день или на полдня?", "chi": "loro", "sub": "ombrellone"},
+    {"it": "Si può fare il bagno qui?", "ru": "Здесь можно купаться?", "chi": "io", "sub": "mare"},
+    {"it": "C'è la bandiera rossa: oggi è vietato fare il bagno.", "ru": "Висит красный флаг: сегодня купаться запрещено.", "chi": "loro", "sub": "mare"},
+    {"it": "Dov'è la doccia?", "ru": "Где душ?", "chi": "io", "sub": "ombrellone"}
+   ]
+  },
+  {
+   "id": "reclami", "it": "Qualcosa non va", "ru": "Что-то не так: вежливая жалоба", "livello": "A2",
+   "contesto": "Ошибка в счёте, принесли не то блюдо, шумный номер, долго ждёшь.",
+   "ruoli": {"tu": "клиент", "yoda": "официант / администратор"},
+   "registro": "Lei, вежливо и твёрдо.",
+   "sottotipi": [
+    {"id": "conto", "ru": "Ошибка в счёте или заказе"},
+    {"id": "camera", "ru": "Проблема с номером"},
+    {"id": "attesa", "ru": "Долгое ожидание"}
+   ],
+   "grammatica": ["aspetto da + время (длится до сих пор → настоящее время)", "mi dispiace", "vorrei + инфинитив"],
+   "cultura": ["Жалобу начинают со «Scusi», без повышенного тона — так быстрее решают."],
+   "frasi": [
+    {"it": "Scusi, c'è un problema con il conto.", "ru": "Простите, в счёте ошибка.", "chi": "io", "sub": "conto"},
+    {"it": "Non ho ordinato questo.", "ru": "Я этого не заказывал.", "chi": "io", "sub": "conto"},
+    {"it": "La camera è rumorosa, posso cambiarla?", "ru": "В номере шумно, можно поменять?", "chi": "io", "sub": "camera"},
+    {"it": "Mi dispiace, ci penso io.", "ru": "Сожалею, я этим займусь.", "chi": "loro", "sub": "camera"},
+    {"it": "Aspetto da mezz'ora.", "ru": "Я жду уже полчаса.", "chi": "io", "sub": "attesa"},
+    {"it": "Vorrei parlare con il responsabile.", "ru": "Я хотел бы поговорить с управляющим.", "chi": "io", "sub": "attesa"}
+   ]
+  },
+  {
+   "id": "emergenze", "it": "Emergenze", "ru": "Экстренные ситуации", "livello": "A2",
+   "contesto": "Потерял паспорт, украли кошелёк, человеку плохо на улице.",
+   "ruoli": {"tu": "пострадавший / свидетель", "yoda": "полицейский / прохожий / диспетчер"},
+   "registro": "Lei; в крике о помощи — повелительное на «вы» во множественном: Chiamate!",
+   "sottotipi": [
+    {"id": "furto", "ru": "Кража и потеря"},
+    {"id": "aiuto", "ru": "Нужна помощь, человеку плохо"}
+   ],
+   "grammatica": ["passato prossimo: ho perso, mi hanno rubato", "Повелительное: chiamate, aiutatemi"],
+   "cultura": ["Единый номер экстренных служб — 112.", "О краже заявляют в полицию (questura или commissariato) и берут справку (denuncia)."],
+   "frasi": [
+    {"it": "Aiuto! Chiamate un'ambulanza!", "ru": "Помогите! Вызовите скорую!", "chi": "io", "sub": "aiuto"},
+    {"it": "Ho perso il passaporto.", "ru": "Я потерял паспорт.", "chi": "io", "sub": "furto"},
+    {"it": "Mi hanno rubato il portafoglio.", "ru": "У меня украли кошелёк.", "chi": "io", "sub": "furto"},
+    {"it": "Dov'è il commissariato più vicino?", "ru": "Где ближайший полицейский участок?", "chi": "io", "sub": "furto"},
+    {"it": "Il numero di emergenza è il 112.", "ru": "Номер экстренных служб — 112.", "chi": "loro", "sub": "aiuto"},
+    {"it": "Sono medico, posso aiutare.", "ru": "Я врач, могу помочь.", "chi": "io", "sub": "aiuto"}
+   ]
+  },
+  {
+   "id": "banca_posta", "it": "Banca, bancomat e posta", "ru": "Банк, банкомат, почта", "livello": "B1",
+   "contesto": "Банкомат съел карту, нужно отправить посылку, заполнить бланк.",
+   "ruoli": {"tu": "клиент", "yoda": "сотрудник"},
+   "registro": "Lei.",
+   "sottotipi": [
+    {"id": "bancomat", "ru": "Банкомат и карта"},
+    {"id": "spedire", "ru": "Отправить посылку"}
+   ],
+   "grammatica": ["Безличное ci vuole / ci vogliono", "dovere + инфинитив: deve compilare"],
+   "cultura": ["Банкомат в Италии — bancomat (так же называют и дебетовую карту)."],
+   "frasi": [
+    {"it": "Il bancomat ha trattenuto la mia carta.", "ru": "Банкомат не вернул мою карту.", "chi": "io", "sub": "bancomat"},
+    {"it": "Dove si trova il bancomat più vicino?", "ru": "Где ближайший банкомат?", "chi": "io", "sub": "bancomat"},
+    {"it": "C'è una commissione?", "ru": "Есть комиссия?", "chi": "io", "sub": "bancomat"},
+    {"it": "Vorrei spedire questo pacco in Russia.", "ru": "Я хотел бы отправить эту посылку в Россию.", "chi": "io", "sub": "spedire"},
+    {"it": "Deve compilare questo modulo.", "ru": "Вам нужно заполнить этот бланк.", "chi": "loro", "sub": "spedire"},
+    {"it": "Quanto tempo ci vuole?", "ru": "Сколько времени это займёт?", "chi": "io", "sub": "spedire"}
+   ]
+  },
+  {
+   "id": "congresso", "it": "Al congresso medico", "ru": "Медицинский конгресс: коллеги и вопросы", "livello": "B1",
+   "contesto": "Перерыв на конгрессе: подойти к докладчику, задать вопрос по исследованию, рассказать о своей работе, обменяться контактами.",
+   "ruoli": {"tu": "детский ортопед, участник", "yoda": "итальянский коллега-докладчик"},
+   "registro": "Lei с незнакомым коллегой; врачи быстро переходят на tu.",
+   "sottotipi": [
+    {"id": "domanda", "ru": "Вопрос после доклада"},
+    {"id": "il_mio_lavoro", "ru": "Рассказать о своей работе"},
+    {"id": "contatti", "ru": "Обменяться контактами"}
+   ],
+   "grammatica": ["Вопросы о числах: quanti pazienti…?", "occuparsi di: mi occupo di…", "Предлоги с артиклем: nello studio, sul follow-up"],
+   "cultura": ["Обращение к врачу — «dottore» / «dottoressa», к профессору — «professore»."],
+   "frasi": [
+    {"it": "Complimenti per la relazione, molto interessante.", "ru": "Поздравляю с докладом, очень интересно.", "chi": "io", "sub": "domanda"},
+    {"it": "Posso farle una domanda sul follow-up?", "ru": "Можно задать вам вопрос о наблюдении после лечения?", "chi": "io", "sub": "domanda"},
+    {"it": "Quanti pazienti avete incluso nello studio?", "ru": "Сколько пациентов вы включили в исследование?", "chi": "io", "sub": "domanda"},
+    {"it": "Di cosa si occupa?", "ru": "Чем вы занимаетесь?", "chi": "loro", "sub": "il_mio_lavoro"},
+    {"it": "Mi occupo di ortopedia pediatrica, soprattutto del ginocchio.", "ru": "Я занимаюсь детской ортопедией, в основном коленным суставом.", "chi": "io", "sub": "il_mio_lavoro"},
+    {"it": "Nella nostra casistica i risultati sono simili.", "ru": "В нашей серии результаты похожие.", "chi": "io", "sub": "il_mio_lavoro"},
+    {"it": "Restiamo in contatto? Ecco il mio biglietto da visita.", "ru": "Будем на связи? Вот моя визитка.", "chi": "io", "sub": "contatti"}
+   ]
+  },
+  {
+   "id": "ufficio", "it": "In un ufficio pubblico", "ru": "Госучреждение (Comune): документы и запись", "livello": "B1",
+   "contesto": "Ратуша или другое учреждение: записаться на приём, узнать, какие нужны документы, где подписать.",
+   "ruoli": {"tu": "заявитель", "yoda": "служащий"},
+   "registro": "Lei, официально.",
+   "sottotipi": [
+    {"id": "appuntamento", "ru": "Записаться"},
+    {"id": "documenti", "ru": "Какие документы нужны"},
+    {"id": "firmare", "ru": "Подписать и уточнить"}
+   ],
+   "grammatica": ["servire: serve un documento / servono due documenti", "Местоимения вместе: me lo può scrivere? / può scrivermelo?"],
+   "cultura": ["Иностранные документы обычно нужны с присяжным переводом (traduzione giurata) и апостилем.", "Nulla osta — официальное «нет препятствий»."],
+   "frasi": [
+    {"it": "Vorrei prendere un appuntamento.", "ru": "Я хотел бы записаться на приём.", "chi": "io", "sub": "appuntamento"},
+    {"it": "Quali documenti servono?", "ru": "Какие нужны документы?", "chi": "io", "sub": "documenti"},
+    {"it": "Serve una traduzione giurata.", "ru": "Нужен присяжный перевод.", "chi": "loro", "sub": "documenti"},
+    {"it": "Torni con il nulla osta.", "ru": "Приходите с разрешением (nulla osta).", "chi": "loro", "sub": "documenti"},
+    {"it": "Dove devo firmare?", "ru": "Где мне подписать?", "chi": "io", "sub": "firmare"},
+    {"it": "Può scrivermelo, per favore?", "ru": "Можете мне это написать?", "chi": "io", "sub": "firmare"}
+   ]
+  },
+  {
+   "id": "ospiti", "it": "Ospiti a cena", "ru": "В гостях: ужин у итальянцев", "livello": "B1",
+   "contesto": "Тебя позвали на ужин: поблагодарить, похвалить еду, тост, отказаться от добавки и попрощаться.",
+   "ruoli": {"tu": "гость", "yoda": "хозяин или хозяйка"},
+   "registro": "tu — между друзьями.",
+   "sottotipi": [
+    {"id": "arrivo", "ru": "Пришёл в гости"},
+    {"id": "a_tavola", "ru": "За столом"},
+    {"id": "saluti", "ru": "Прощание"}
+   ],
+   "grammatica": ["ne: ne vuoi ancora? — ne prendo un po'", "Восклицания: buonissimo! complimenti!"],
+   "cultura": ["Принято принести вино или сладкое (dolce).", "Тост — «Cin cin!» или «Alla salute!»."],
+   "frasi": [
+    {"it": "Grazie dell'invito!", "ru": "Спасибо за приглашение!", "chi": "io", "sub": "arrivo"},
+    {"it": "È tutto buonissimo, complimenti!", "ru": "Всё очень вкусно, браво!", "chi": "io", "sub": "a_tavola"},
+    {"it": "Cin cin! Alla salute!", "ru": "Будем! За здоровье!", "chi": "io", "sub": "a_tavola"},
+    {"it": "Ne vuoi ancora?", "ru": "Хочешь ещё?", "chi": "loro", "sub": "a_tavola"},
+    {"it": "Volentieri, ma solo un po'.", "ru": "С удовольствием, но совсем немного.", "chi": "io", "sub": "a_tavola"},
+    {"it": "Ci vediamo presto, grazie di tutto!", "ru": "Скоро увидимся, спасибо за всё!", "chi": "io", "sub": "saluti"}
+   ]
+  }
+ ]
+}

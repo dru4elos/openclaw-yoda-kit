@@ -1,0 +1,8 @@
+[Unit]
+Description=Итальянский: вечерний повтор — открыть и позвать Йоду (it.py kick)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/italiano
+ExecStart=%h/mailvenv/bin/python %h/projects/italiano/tools/it.py kick
+TimeoutStartSec=1000

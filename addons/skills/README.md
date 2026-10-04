@@ -17,6 +17,7 @@
 | whatsapp | отправка через канал OpenClaw + правила подотчётности | плагин whatsapp |
 | events | пример интеграции внешнего афиша-скрипта через sudo-хелпер | — |
 | hyperresearch | глубокое исследование в фоне ([jordan-gibbs/hyperresearch](https://github.com/jordan-gibbs/hyperresearch), MIT) поверх Codex CLI: `hr.sh start "<вопрос>" [--light\|--full]`, прогресс в живой полоске `yoda-progress`, отчёт на русском уходит владельцу docx через tome | Codex CLI, `~/hr-venv` с hyperresearch из GitHub (в PyPI 0.12.0 нет цели codex), pandoc |
+| italiano | итальянский по ситуациям: сцена ролевой игрой, ошибка → правило → задания до двух верных подряд, память занятий в отдельном репо (`repo/` — заготовка: `tools/it.py`, каталог 19 ситуаций A1–B1), вечерний повтор FSRS: таймер `systemd/` каждые 15 мин → `it.py kick` в окне 20:00 открывает повтор и зовёт агента в чат владельца (`openclaw agent --session-key … --deliver`), запасной путь — tome | `pip install fsrs` (py-fsrs, MIT) |
 
 После копирования пройдитесь по файлам: `123456789` → ваш Telegram ID,
 `you@example.com` → ваш email, пути venv — под ваши.
