@@ -29,21 +29,25 @@ if [ -n "$DK" ]; then
 fi
 
 
-# Основная модель Йоды. 16.09 GPT-6 Astra сбоила примерно в трети запросов, а дозор проверял
-# только gemini-3.8-flash и молчал. Три пробы: две и больше с ошибкой — считаем, что сбоит.
+# Основная модель Йоды — какая стоит в конфиге сейчас (06.10: тут была зашита GPT-6 Astra, хотя с 01.10
+# основная — GPT-6.1 Sol, и доктор получал «Astra сбоит»). Три пробы: две и больше с ошибкой — сбоит.
 AST=/var/tmp/excash_astra.state
+PRIM=$(python3 -c "import json;print(json.load(open('/home/openclaw/.openclaw/openclaw.json'))['agents']['defaults']['model']['primary'])" 2>/dev/null)
+case "$PRIM" in excash/*) MAIN=${PRIM#excash/};; *) MAIN="";; esac
+if [ -n "$MAIN" ]; then
 fails=0
 for i in 1 2 3; do
   c=$(curl -s -m 60 -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $K" -H "Content-Type: application/json" \
-      -d '{"model":"gpt-6-astra","messages":[{"role":"user","content":"ok?"}],"max_tokens":5}' http://127.0.0.1:8788/chat/completions)
+      -d "{\"model\":\"$MAIN\",\"messages\":[{\"role\":\"user\",\"content\":\"ok?\"}],\"max_tokens\":5}" http://127.0.0.1:8788/chat/completions)
   [ "$c" = "200" ] || fails=$((fails+1))
 done
 aprev=$(cat $AST 2>/dev/null || echo "?")
 if [ $fails -ge 2 ]; then
   echo bad > $AST
-  [ "$aprev" != "bad" ] && say "⚠️ Основная модель Йоды GPT-6 Astra на excash сбоит: $fails из 3 проверок с ошибкой. Йода отвечает через резервы, медленнее. Если затянется: sudo yoda-models excash-flash (основной станет Gemini)"
+  [ "$aprev" != "bad" ] && say "⚠️ Основная модель Йоды $MAIN на excash сбоит: $fails из 3 проверок с ошибкой. Йода отвечает через резервы, медленнее. Если затянется: sudo yoda-models excash-flash (основной станет Gemini)"
 else
   echo ok > $AST
-  [ "$aprev" = "bad" ] && say "✅ GPT-6 Astra на excash снова отвечает. Вернуть её основной: sudo yoda-models excash"
+  [ "$aprev" = "bad" ] && say "✅ $MAIN на excash снова отвечает."
+fi
 fi
 exit 0

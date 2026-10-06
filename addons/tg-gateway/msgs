@@ -1,0 +1,4 @@
+#!/bin/bash
+# Агент зовёт переписку коротко — «msgs chats/read/search…». Это то же самое, что sudo -n /root/yoda_tg.sh msgs …
+# Положить в /usr/local/bin/msgs (chmod 755): без обёртки Йода получал «msgs: command not found».
+exec sudo -n /root/yoda_tg.sh msgs "$@"
