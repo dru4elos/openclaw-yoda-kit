@@ -28,6 +28,12 @@ PROXY = {"https": "socks5h://127.0.0.1:40111", "http": "socks5h://127.0.0.1:4011
 def call(method, data=None, files=None):
     last = None
     for proxies in (None, PROXY):          # сначала напрямую, потом через WARP
+        # первая попытка дочитывает файл до конца — без перемотки повтор шлёт 0 байт
+        # («file must be non-empty»), и файл не доходит
+        for v in (files or {}).values():
+            fh = v[1] if isinstance(v, tuple) else v
+            if hasattr(fh, "seek"):
+                fh.seek(0)
         try:
             r = requests.post(f"{BASE}/{method}", data=data, files=files,
                               proxies=proxies, timeout=90)
